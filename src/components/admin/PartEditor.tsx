@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card } from "@/components/ui";
+import { uploadAudioFromBrowser } from "@/lib/upload-audio-client";
 import type { QuestionType } from "@/types/exam";
 
 export interface PartEditorProps {
@@ -101,29 +102,21 @@ export function PartEditor({
   const upload = async (file: File) => {
     setBusy(true);
     setError(null);
-    const formData = new FormData();
-    formData.append("file", file);
-    const response = await fetch("/api/admin/audio", {
-      method: "POST",
-      body: formData,
-    });
-    const data = (await response.json().catch(() => null)) as {
-      url?: string;
-      error?: string;
-    } | null;
-    if (!response.ok || !data?.url) {
-      setError(data?.error ?? "Upload fehlgeschlagen.");
+    const { url: uploadedUrl, error: uploadError } =
+      await uploadAudioFromBrowser(file);
+    if (uploadError || !uploadedUrl) {
+      setError(uploadError ?? "Upload fehlgeschlagen.");
     } else {
       // Injecte l'URL dans shared.audioUrl du JSON en cours d'édition.
       try {
         const parsed = JSON.parse(text) as {
           shared?: Record<string, unknown>;
         };
-        parsed.shared = { ...(parsed.shared ?? {}), audioUrl: data.url };
+        parsed.shared = { ...(parsed.shared ?? {}), audioUrl: uploadedUrl };
         setText(JSON.stringify(parsed, null, 2));
-        setStatus(`Audio hochgeladen: ${data.url} — jetzt speichern.`);
+        setStatus(`Audio hochgeladen: ${uploadedUrl} — jetzt speichern.`);
       } catch {
-        setStatus(`Audio hochgeladen: ${data.url}`);
+        setStatus(`Audio hochgeladen: ${uploadedUrl}`);
       }
     }
     setBusy(false);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui";
+import { uploadAudioFromBrowser } from "@/lib/upload-audio-client";
 
 interface AudioFile {
   name: string;
@@ -32,17 +33,9 @@ export function AudioLibrary() {
   const upload = async (file: File) => {
     setBusy(true);
     setError(null);
-    const formData = new FormData();
-    formData.append("file", file);
-    const response = await fetch("/api/admin/audio", {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setError(data?.error ?? "Upload fehlgeschlagen.");
+    const { error: uploadError } = await uploadAudioFromBrowser(file);
+    if (uploadError) {
+      setError(uploadError);
     }
     await load();
     setBusy(false);
