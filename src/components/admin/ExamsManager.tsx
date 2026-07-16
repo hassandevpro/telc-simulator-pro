@@ -20,8 +20,10 @@ interface ExamRow {
 export function ExamsManager() {
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [level, setLevel] = useState("B2");
+  const [withAudio, setWithAudio] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -61,9 +63,65 @@ export function ExamsManager() {
       body: JSON.stringify({ title, level }),
     }).then(() => setTitle(""));
 
+  /**
+   * Génère un examen INÉDIT (les 10 Teile, 62 questions et clés sont produits
+   * par le générateur) et, si demandé, synthétise l'audio Hören en allemand.
+   * L'examen est créé même si l'audio échoue : le message décrit alors le
+   * problème (clé ElevenLabs manquante/invalide, quota…).
+   */
+  const generate = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await fetch("/api/admin/exams/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        level,
+        withAudio,
+        title: title.trim() || undefined,
+      }),
+    });
+    const data = (await response.json().catch(() => null)) as {
+      title?: string;
+      questionCount?: number;
+      audio?: {
+        requested: boolean;
+        status: string;
+        generated?: string[];
+        error?: { message?: string };
+      };
+      error?: string;
+      details?: string[];
+    } | null;
+
+    if (!response.ok) {
+      setError(
+        data?.details?.length
+          ? `${data.error} (${data.details.length} Problem[e])`
+          : (data?.error ?? "Generierung fehlgeschlagen."),
+      );
+    } else {
+      let msg = `Testsatz erstellt: „${data?.title}“ (${data?.questionCount} Fragen).`;
+      const a = data?.audio;
+      if (a?.requested) {
+        const n = a.generated?.length ?? 0;
+        if (a.status === "done") msg += ` Audio: ${n}/3 erzeugt.`;
+        else if (a.status === "partial")
+          msg += ` Audio nur ${n}/3 — ${a.error?.message}`;
+        else msg += ` Audio nicht erzeugt: ${a.error?.message}`;
+      }
+      setNotice(msg);
+      setTitle("");
+    }
+    await load();
+    setBusy(false);
+  };
+
   const importDemo = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     const response = await fetch("/api/admin/exams/import-demo", {
       method: "POST",
     });
@@ -121,6 +179,22 @@ export function ExamsManager() {
           Examen erstellen
         </Button>
         <Button
+          variant="primary"
+          disabled={busy}
+          onClick={() => void generate()}
+        >
+          {busy && withAudio ? "Generiere (inkl. Audio)…" : "Testsatz generieren"}
+        </Button>
+        <label className="flex items-center gap-1.5 text-[13px] select-none">
+          <input
+            type="checkbox"
+            checked={withAudio}
+            onChange={(event) => setWithAudio(event.target.checked)}
+            className="h-3.5 w-3.5 accent-accent"
+          />
+          Hören-Audio (ElevenLabs)
+        </label>
+        <Button
           variant="secondary"
           disabled={busy}
           onClick={() => void importDemo()}
@@ -129,6 +203,7 @@ export function ExamsManager() {
         </Button>
       </Card>
 
+      {notice ? <p className="text-[13px] text-accent">{notice}</p> : null}
       {error ? <p className="text-[13px] text-danger">{error}</p> : null}
 
       <Card className="divide-y divide-border">
