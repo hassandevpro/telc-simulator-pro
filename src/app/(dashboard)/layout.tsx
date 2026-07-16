@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
 import { SignOutButton } from "@/components/auth";
 
 /**
@@ -12,6 +13,18 @@ export default async function DashboardLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const session = await auth();
   const role = session?.user?.role;
+
+  // Un acheteur self-service devient CENTER_ADMIN, mais son JWT ne le
+  // reflète qu'à la reconnexion : on affiche « Mein Zentrum » dès qu'il
+  // possède un centre en base.
+  const ownsCenter =
+    role === "CENTER_ADMIN"
+      ? true
+      : session?.user?.id
+        ? !!(await db.center
+            .findUnique({ where: { ownerId: session.user.id }, select: { id: true } })
+            .catch(() => null))
+        : false;
 
   return (
     <div className="min-h-screen">
@@ -35,7 +48,7 @@ export default async function DashboardLayout({
                 Administration
               </Link>
             ) : null}
-            {role === "CENTER_ADMIN" ? (
+            {ownsCenter ? (
               <Link href="/center" className="hover:text-foreground">
                 Mein Zentrum
               </Link>

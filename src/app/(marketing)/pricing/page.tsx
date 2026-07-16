@@ -1,6 +1,6 @@
-import Link from "next/link";
-import { Button, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { PlanCheckout } from "@/components/marketing/PlanCheckout";
+import { CenterPurchase } from "@/components/marketing/CenterPurchase";
 import { PLAN_DEFINITIONS } from "@/config/plans";
 import type { PayablePlan } from "@/config/pricing";
 
@@ -49,14 +49,7 @@ export default function PricingPage() {
               {plan.id === "STUDENT" || plan.id === "PREMIUM" ? (
                 <PlanCheckout plan={plan.id as PayablePlan} />
               ) : (
-                <Link href={plan.cta.href}>
-                  <Button
-                    variant={plan.highlighted ? "primary" : "secondary"}
-                    className="w-full"
-                  >
-                    {plan.cta.label}
-                  </Button>
-                </Link>
+                <CenterPurchase />
               )}
             </div>
           </Card>

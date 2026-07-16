@@ -1,15 +1,15 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireCenterAdmin } from "@/lib/admin-guard";
 import { CenterManager } from "@/components/center/CenterManager";
 
-/** Espace de gestion d'un centre — réservé au CENTER_ADMIN. */
+/** Espace de gestion d'un centre — CENTER_ADMIN ou propriétaire d'un centre. */
 export default async function CenterPage({
   searchParams,
 }: {
   searchParams: Promise<{ payment?: string }>;
 }) {
-  const session = await auth();
-  if (session?.user?.role !== "CENTER_ADMIN") {
+  const session = await requireCenterAdmin();
+  if (!session) {
     redirect("/dashboard");
   }
   const { payment } = await searchParams;

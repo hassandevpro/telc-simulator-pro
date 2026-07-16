@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { requireCenterAdmin } from "@/lib/admin-guard";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CENTER_SEAT_PRICE, centerAmount } from "@/config/pricing";
 import { createFlutterwavePayment } from "@/lib/payments/flutterwave";
@@ -17,23 +17,16 @@ const schema = z.object({
 });
 
 /**
- * Achat de sièges (quota d'étudiants) pour le centre — paiement CENTER par
- * carte (Stripe) ou Mobile Money (Flutterwave). Les sièges sont crédités au
- * webhook. Réservé au CENTER_ADMIN disposant déjà d'un centre.
+ * Achat de sièges (quota d'étudiants) — paiement CENTER par carte (Stripe)
+ * ou Mobile Money (Flutterwave). SELF-SERVICE : accessible à tout utilisateur
+ * connecté ; au webhook, l'acheteur est promu CENTER_ADMIN, son centre est
+ * créé si besoin et les sièges sont ajoutés au quota.
  */
 export async function POST(request: Request) {
-  const session = await requireCenterAdmin();
+  const session = await auth();
   const user = session?.user;
   if (!user?.id || !user.email) {
-    return NextResponse.json({ error: "Zugriff verweigert." }, { status: 403 });
-  }
-
-  const center = await db.center.findUnique({ where: { ownerId: user.id } });
-  if (!center) {
-    return NextResponse.json(
-      { error: "Erstellen Sie zuerst Ihr Zentrum." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
   }
 
   const parsed = schema.safeParse(await request.json().catch(() => null));

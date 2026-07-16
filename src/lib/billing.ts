@@ -1,4 +1,5 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
@@ -41,14 +42,35 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
     }),
   ]);
 
-  // Achat CENTER par quota : crédite les sièges au centre de l'acheteur.
-  if (payment.plan === "CENTER" && payment.seats != null) {
-    await db.center
-      .updateMany({
-        where: { ownerId: payment.userId },
-        data: { seats: payment.seats },
-      })
-      .catch(() => undefined);
+  // Achat CENTER par quota (self-service) : promeut l'acheteur en
+  // CENTER_ADMIN, crée son centre s'il n'existe pas, et AJOUTE les sièges
+  // achetés au quota existant (additif).
+  if (payment.plan === "CENTER") {
+    const addSeats = payment.seats ?? 0;
+    const center = await db.center.findUnique({
+      where: { ownerId: payment.userId },
+    });
+    if (center) {
+      await db.center.update({
+        where: { id: center.id },
+        data: { seats: { increment: addSeats } },
+      });
+    } else {
+      await db.center.create({
+        data: {
+          ownerId: payment.userId,
+          name: "Mein Zentrum",
+          inviteCode: randomBytes(9).toString("base64url"),
+          seats: addSeats,
+        },
+      });
+    }
+    // Le rôle du JWT ne se rafraîchit qu'à la reconnexion ; l'accès à
+    // /center est néanmoins possible via la propriété du centre (requireCenterAdmin).
+    await db.user.update({
+      where: { id: payment.userId },
+      data: { role: "CENTER_ADMIN" },
+    });
   }
   return true;
 }
@@ -64,7 +86,12 @@ export async function getCurrentUserPlan(): Promise<string> {
   if (!id) return "FREE";
   const user = await db.user.findUnique({
     where: { id },
-    select: { plan: true, planExpiresAt: true, centerId: true },
+    select: {
+      plan: true,
+      planExpiresAt: true,
+      centerId: true,
+      center: { select: { owner: { select: { plan: true, planExpiresAt: true } } } },
+    },
   });
   if (!user) return "FREE";
 
@@ -78,7 +105,14 @@ export async function getCurrentUserPlan(): Promise<string> {
   }
 
   // Étudiant membre d'un centre : accès au catalogue complet via le centre,
-  // même sans abonnement individuel.
-  if (plan === "FREE" && user.centerId) return "STUDENT";
+  // MAIS seulement tant que l'abonnement du centre (son propriétaire) est
+  // actif — rétrogradation en cascade à l'expiration.
+  if (plan === "FREE" && user.centerId && user.center?.owner) {
+    const owner = user.center.owner;
+    const active =
+      owner.plan !== "FREE" &&
+      (!owner.planExpiresAt || owner.planExpiresAt.getTime() > Date.now());
+    if (active) return "STUDENT";
+  }
   return plan;
 }
