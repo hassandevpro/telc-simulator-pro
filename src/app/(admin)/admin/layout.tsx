@@ -15,7 +15,12 @@ export default async function AdminLayout({
   const session = await auth();
   const role = session?.user?.role;
 
-  if (role !== "SUPER_ADMIN" && role !== "CENTER_ADMIN") {
+  // Administration plateforme : SUPER_ADMIN uniquement. Un CENTER_ADMIN est
+  // redirigé vers son espace centre.
+  if (role === "CENTER_ADMIN") {
+    redirect("/center");
+  }
+  if (role !== "SUPER_ADMIN") {
     redirect("/login");
   }
 

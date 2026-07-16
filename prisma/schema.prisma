@@ -59,12 +59,35 @@ model User {
   emailVerified DateTime?
   // Fin de validité du plan payant (abonnement) — null pour FREE.
   planExpiresAt DateTime?
-  // Rattachement à un centre de langue (plan CENTER).
+  // Rattachement à un centre de langue en tant qu'ÉTUDIANT membre.
   centerId     String?
+  center       Center?       @relation("CenterMembers", fields: [centerId], references: [id])
+  // Centre géré par cet utilisateur (rôle CENTER_ADMIN) — au plus un.
+  ownedCenter  Center?       @relation("CenterOwner")
   sessions     ExamSession[]
   payments     Payment[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+
+  @@index([centerId])
+}
+
+/**
+ * Centre de langue : un compte CENTER_ADMIN (owner) gère des étudiants
+ * (members). Les étudiants rejoignent via un lien contenant `inviteCode`
+ * (la « clé »). Le nombre de places (`seats`) est acheté au quota d'élèves.
+ */
+model Center {
+  id         String   @id @default(cuid())
+  name       String
+  ownerId    String   @unique
+  owner      User     @relation("CenterOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  // Clé d'invitation (partagée via le lien /join/<inviteCode>).
+  inviteCode String   @unique
+  // Quota d'étudiants acheté.
+  seats      Int      @default(0)
+  members    User[]   @relation("CenterMembers")
+  createdAt  DateTime @default(now())
 }
 
 /** Jeton de vérification d'e-mail (haché) — usage unique, borné dans le temps. */
@@ -100,6 +123,8 @@ model Payment {
   plan        Plan
   amount      Float
   currency    String
+  // Places achetées (paiement CENTER par quota) — null pour Student/Premium.
+  seats       Int?
   status      PaymentStatus   @default(PENDING)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt

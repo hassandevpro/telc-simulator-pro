@@ -40,6 +40,16 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
       data: { plan: payment.plan, planExpiresAt },
     }),
   ]);
+
+  // Achat CENTER par quota : crédite les sièges au centre de l'acheteur.
+  if (payment.plan === "CENTER" && payment.seats != null) {
+    await db.center
+      .updateMany({
+        where: { ownerId: payment.userId },
+        data: { seats: payment.seats },
+      })
+      .catch(() => undefined);
+  }
   return true;
 }
 
@@ -54,15 +64,21 @@ export async function getCurrentUserPlan(): Promise<string> {
   if (!id) return "FREE";
   const user = await db.user.findUnique({
     where: { id },
-    select: { plan: true, planExpiresAt: true },
+    select: { plan: true, planExpiresAt: true, centerId: true },
   });
   if (!user) return "FREE";
+
+  let plan = user.plan as string;
   if (
-    user.plan !== "FREE" &&
+    plan !== "FREE" &&
     user.planExpiresAt &&
     user.planExpiresAt.getTime() < Date.now()
   ) {
-    return "FREE";
+    plan = "FREE";
   }
-  return user.plan;
+
+  // Étudiant membre d'un centre : accès au catalogue complet via le centre,
+  // même sans abonnement individuel.
+  if (plan === "FREE" && user.centerId) return "STUDENT";
+  return plan;
 }

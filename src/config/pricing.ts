@@ -31,3 +31,20 @@ export const PLAN_PRICES: Record<PayablePlan, PlanPrice> = {
 export function getPlanPrice(plan: string): PlanPrice | null {
   return plan in PLAN_PRICES ? PLAN_PRICES[plan as PayablePlan] : null;
 }
+
+/**
+ * Plan CENTER : facturé au QUOTA d'étudiants (par siège / mois). Le centre
+ * achète N sièges → N étudiants peuvent rejoindre via le lien d'invitation.
+ */
+export const CENTER_SEAT_PRICE = {
+  eur: 4,
+  xaf: 2500,
+  durationDays: 30,
+  minSeats: 1,
+  maxSeats: 500,
+};
+
+export function centerAmount(seats: number, currency: "EUR" | "XAF"): number {
+  const unit = currency === "EUR" ? CENTER_SEAT_PRICE.eur : CENTER_SEAT_PRICE.xaf;
+  return Math.round(seats * unit * 100) / 100;
+}

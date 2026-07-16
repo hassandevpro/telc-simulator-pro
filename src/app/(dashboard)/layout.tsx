@@ -30,9 +30,14 @@ export default async function DashboardLayout({
             <Link href="/results" className="hover:text-foreground">
               Ergebnisse
             </Link>
-            {role === "SUPER_ADMIN" || role === "CENTER_ADMIN" ? (
+            {role === "SUPER_ADMIN" ? (
               <Link href="/admin" className="hover:text-foreground">
                 Administration
+              </Link>
+            ) : null}
+            {role === "CENTER_ADMIN" ? (
+              <Link href="/center" className="hover:text-foreground">
+                Mein Zentrum
               </Link>
             ) : null}
             <SignOutButton />

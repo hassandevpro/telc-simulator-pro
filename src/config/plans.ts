@@ -50,14 +50,14 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
   {
     id: "CENTER",
     name: "Center",
-    price: "49 €",
-    period: "pro Monat",
+    price: "4 €",
+    period: "pro Platz / Monat",
     description: "Für Sprachschulen und Prüfungszentren.",
     features: [
-      "Bis zu 50 Kandidatenkonten",
-      "Eigene Modelltests über die Administration",
-      "Audio-Upload für Hörverstehen",
-      "Zentrale Benutzerverwaltung",
+      "Kontingent nach Anzahl Studierender",
+      "Einladungslink + Schlüssel für den Beitritt",
+      "Zentrale Verwaltung der Studierenden",
+      "Voller Zugang zu den Modelltests für alle Plätze",
     ],
     cta: {
       label: "Kontakt aufnehmen",

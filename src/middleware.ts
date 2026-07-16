@@ -14,6 +14,8 @@ export const config = {
     "/dashboard/:path*",
     "/results/:path*",
     "/admin/:path*",
+    "/center/:path*",
+    "/join/:path*",
     "/session/:path*",
     "/audio-check",
   ],
