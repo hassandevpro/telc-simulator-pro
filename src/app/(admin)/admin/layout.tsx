@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { SignOutButton } from "@/components/auth";
 
 /**
  * Layout admin avec garde de rôle (ARCHITECTURE.md §2).
@@ -41,6 +42,10 @@ export default async function AdminLayout({
             <Link href="/admin/users" className="hover:text-foreground">
               Utilisateurs
             </Link>
+            <Link href="/dashboard" className="hover:text-foreground">
+              Zur Übersicht
+            </Link>
+            <SignOutButton />
           </nav>
         </div>
       </header>
