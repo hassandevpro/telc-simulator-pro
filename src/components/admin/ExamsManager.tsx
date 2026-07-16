@@ -61,6 +61,27 @@ export function ExamsManager() {
       body: JSON.stringify({ title, level }),
     }).then(() => setTitle(""));
 
+  const importDemo = async () => {
+    setBusy(true);
+    setError(null);
+    const response = await fetch("/api/admin/exams/import-demo", {
+      method: "POST",
+    });
+    const data = (await response.json().catch(() => null)) as {
+      alreadyExists?: boolean;
+      error?: string;
+    } | null;
+    if (!response.ok) {
+      setError(data?.error ?? "Aktion fehlgeschlagen.");
+    } else if (data?.alreadyExists) {
+      setError(
+        "Der Demo-Modelltest existiert bereits — kein Duplikat erstellt.",
+      );
+    }
+    await load();
+    setBusy(false);
+  };
+
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-end gap-3 p-4">
@@ -100,9 +121,7 @@ export function ExamsManager() {
         <Button
           variant="secondary"
           disabled={busy}
-          onClick={() =>
-            void call("/api/admin/exams/import-demo", { method: "POST" })
-          }
+          onClick={() => void importDemo()}
         >
           Demo-Modelltest importieren
         </Button>

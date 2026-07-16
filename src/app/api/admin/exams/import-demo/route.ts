@@ -17,6 +17,20 @@ export async function POST() {
     return NextResponse.json({ error: "Zugriff verweigert." }, { status: 403 });
   }
 
+  // Empêche les doublons : un import du Modelltest de démonstration
+  // existe déjà (repérable à son titre), on ne le recrée pas — chaque
+  // clic répété créait sinon un nouvel examen identique.
+  const existing = await db.exam.findFirst({
+    where: { title: `${DEMO_B2_CONTENT.title} — Import` },
+    select: { id: true },
+  });
+  if (existing) {
+    return NextResponse.json(
+      { id: existing.id, alreadyExists: true },
+      { status: 200 },
+    );
+  }
+
   const exam = await db.exam.create({
     data: {
       title: `${DEMO_B2_CONTENT.title} — Import`,
