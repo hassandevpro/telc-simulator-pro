@@ -1,17 +1,24 @@
 import { auth } from "@/lib/auth";
 import { StartExamCard } from "@/components/exam/StartExamCard";
 import { SessionList } from "@/components/results";
+import { getCurrentUserPlan } from "@/lib/billing";
 import { listAvailableExams } from "@/lib/exam-content";
 
 /**
  * Dashboard candidat : examen disponible + sessions de l'appareil.
- * v2 : liste des examens publiés depuis la base (isPublished).
+ * Le plan est lu EN BASE (getCurrentUserPlan) — reflète un achat aussitôt et
+ * rétrograde à FREE si l'abonnement a expiré, sans reconnexion.
  */
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ payment?: string }>;
+}) {
   const session = await auth();
-  const plan = session?.user?.plan;
+  const plan = await getCurrentUserPlan();
   const ownerKey = session?.user?.id;
   const exams = await listAvailableExams(plan);
+  const { payment } = await searchParams;
 
   return (
     <section>
@@ -23,6 +30,13 @@ export default async function DashboardPage() {
           </span>
         ) : null}
       </h1>
+
+      {payment === "success" ? (
+        <p className="mt-4 rounded-sm border border-border bg-surface px-3 py-2 text-[13px]">
+          Zahlung erhalten — Ihr Zugang ist aktiv. Die Freischaltung kann einen
+          Moment dauern; laden Sie die Seite bei Bedarf neu.
+        </p>
+      ) : null}
 
       <h2 className="mt-6 text-[13px] font-semibold uppercase tracking-wide text-muted">
         Verfügbare Prüfungen

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
+import { PlanCheckout } from "@/components/marketing/PlanCheckout";
 import { PLAN_DEFINITIONS } from "@/config/plans";
+import type { PayablePlan } from "@/config/pricing";
 
 /** Tarifs — Student / Premium / Center, depuis config/plans.ts. */
 export default function PricingPage() {
@@ -44,22 +46,27 @@ export default function PricingPage() {
               ))}
             </ul>
             <div className="mt-5">
-              <Link href={plan.cta.href}>
-                <Button
-                  variant={plan.highlighted ? "primary" : "secondary"}
-                  className="w-full"
-                >
-                  {plan.cta.label}
-                </Button>
-              </Link>
+              {plan.id === "STUDENT" || plan.id === "PREMIUM" ? (
+                <PlanCheckout plan={plan.id as PayablePlan} />
+              ) : (
+                <Link href={plan.cta.href}>
+                  <Button
+                    variant={plan.highlighted ? "primary" : "secondary"}
+                    className="w-full"
+                  >
+                    {plan.cta.label}
+                  </Button>
+                </Link>
+              )}
             </div>
           </Card>
         ))}
       </div>
 
       <p className="mt-6 text-[12px] text-muted">
-        Die Planzuweisung erfolgt derzeit über die Administration — Zahlung
-        auf Rechnung. Online-Zahlung folgt.
+        Bezahlung per Karte (weltweit, via Stripe) oder Mobile Money in Afrika
+        — u. a. Kamerun MTN/Orange, via Flutterwave. Der Zugang wird nach
+        erfolgreicher Zahlung für 30 Tage freigeschaltet.
       </p>
     </section>
   );
