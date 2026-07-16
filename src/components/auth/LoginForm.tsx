@@ -1,0 +1,116 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { signIn } from "next-auth/react";
+import { Button, Card } from "@/components/ui";
+
+const loginSchema = z.object({
+  email: z.email("Bitte eine gültige E-Mail-Adresse angeben."),
+  password: z.string().min(1, "Bitte das Passwort angeben."),
+});
+
+type LoginValues = z.infer<typeof loginSchema>;
+
+const inputClass =
+  "mt-1 w-full border border-border bg-background px-2.5 py-1.5 text-[13px] " +
+  "rounded-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent";
+
+/** Formulaire de connexion — NextAuth Credentials, sans redirection dure. */
+export function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginValues>({ resolver: zodResolver(loginSchema) });
+
+  const onSubmit = async (values: LoginValues) => {
+    setAuthError(null);
+    const result = await signIn("credentials", {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+    });
+    if (result?.error) {
+      setAuthError("Anmeldung fehlgeschlagen. E-Mail oder Passwort falsch.");
+      return;
+    }
+    router.push(searchParams.get("callbackUrl") ?? "/dashboard");
+    router.refresh();
+  };
+
+  return (
+    <Card className="w-full max-w-sm p-6">
+      <h1 className="text-base font-semibold">Anmelden</h1>
+      <form
+        className="mt-4 space-y-3"
+        onSubmit={(event) => void handleSubmit(onSubmit)(event)}
+      >
+        <div>
+          <label htmlFor="login-email" className="text-[13px] font-medium">
+            E-Mail
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            autoComplete="email"
+            className={inputClass}
+            {...register("email")}
+          />
+          {errors.email ? (
+            <p className="mt-1 text-[12px] text-danger">
+              {errors.email.message}
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <label htmlFor="login-password" className="text-[13px] font-medium">
+            Passwort
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            autoComplete="current-password"
+            className={inputClass}
+            {...register("password")}
+          />
+          {errors.password ? (
+            <p className="mt-1 text-[12px] text-danger">
+              {errors.password.message}
+            </p>
+          ) : null}
+        </div>
+
+        {authError ? (
+          <p className="text-[12px] text-danger">{authError}</p>
+        ) : null}
+
+        <Button
+          type="submit"
+          variant="primary"
+          className="w-full"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Wird angemeldet…" : "Anmelden"}
+        </Button>
+      </form>
+      <p className="mt-4 text-[12px] text-muted">
+        Noch kein Konto?{" "}
+        <Link
+          href="/register"
+          className="text-accent underline underline-offset-2"
+        >
+          Registrieren
+        </Link>
+      </p>
+    </Card>
+  );
+}

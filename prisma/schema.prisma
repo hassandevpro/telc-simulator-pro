@@ -1,0 +1,152 @@
+// Modèle de données TELC Simulator Pro — conforme à ARCHITECTURE.md §4.
+// La STRUCTURE officielle telc vit dans src/config/exam-structure.ts ;
+// la base ne stocke que le CONTENU et les sessions.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7 : l'URL de connexion vit dans prisma.config.ts (migrations)
+  // et dans le driver adapter passé à PrismaClient (src/lib/db.ts).
+}
+
+enum Role {
+  STUDENT
+  CENTER_ADMIN
+  SUPER_ADMIN
+}
+
+enum Plan {
+  FREE
+  STUDENT
+  CENTER
+  PREMIUM
+}
+
+enum Level {
+  B1
+  B2
+}
+
+enum QuestionType {
+  TITLE_MATCHING
+  MULTIPLE_CHOICE
+  AD_MATCHING
+  CLOZE_DROPDOWN
+  WRITING
+}
+
+enum SessionStatus {
+  AUDIO_CHECK
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+  SCORED
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  name         String
+  role         Role          @default(STUDENT)
+  plan         Plan          @default(FREE)
+  // Rattachement à un centre de langue (plan CENTER).
+  centerId     String?
+  sessions     ExamSession[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Exam {
+  id          String        @id @default(cuid())
+  title       String
+  level       Level
+  isPublished Boolean       @default(false)
+  parts       ExamPart[]
+  sessions    ExamSession[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model ExamPart {
+  id        String     @id @default(cuid())
+  examId    String
+  exam      Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  // Références vers la structure officielle (config/exam-structure.ts).
+  sectionId String // "lesen" | "hoeren" | "sprachbausteine" | "schreiben"
+  partId    String // "teil-1" | "teil-2" | "teil-3" | "aufgabe-a" | "aufgabe-b"
+  // Contenu partagé du Teil : texte(s) source, banque des 10 titres,
+  // annonces A–L, texte à trous… Forme validée par Zod selon le type
+  // (src/types/question-content.ts).
+  sharedContent Json?
+  // Hören uniquement.
+  audioUrl  String?
+  questions Question[]
+
+  @@unique([examId, sectionId, partId])
+}
+
+model Question {
+  id       String       @id @default(cuid())
+  partId   String
+  part     ExamPart     @relation(fields: [partId], references: [id], onDelete: Cascade)
+  position Int
+  type     QuestionType
+  // Structure validée par Zod selon `type` (src/types/question-content.ts).
+  content  Json
+  // Correction automatique — null pour WRITING (correction manuelle v1).
+  answerKey Json?
+  points   Float
+  answers  Answer[]
+
+  @@unique([partId, position])
+}
+
+model ExamSession {
+  id     String        @id @default(cuid())
+  userId String
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId String
+  exam   Exam          @relation(fields: [examId], references: [id])
+  status SessionStatus @default(AUDIO_CHECK)
+  // Ancre du timer — posée une seule fois, JAMAIS modifiée ensuite.
+  // Fondement du timer inviolable (ARCHITECTURE.md §6).
+  startedAt   DateTime?
+  submittedAt DateTime?
+  // Ids des audios déjà consommés (marqués dès `play`).
+  audioPlayed Json      @default("[]")
+  answers     Answer[]
+  result      Result?
+  createdAt   DateTime  @default(now())
+}
+
+model Answer {
+  id         String      @id @default(cuid())
+  sessionId  String
+  session    ExamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  // string (choix / texte libre) ou null — voir types/session.ts.
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  // L'autosave est un simple upsert idempotent.
+  @@unique([sessionId, questionId])
+}
+
+model Result {
+  id          String      @id @default(cuid())
+  sessionId   String      @unique
+  session     ExamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  totalPoints Float
+  maxPoints   Float
+  // Détail par section/Teil (calculé par lib/scoring, Sprint 8).
+  sectionScores Json
+  // null tant que le Schreiben n'est pas corrigé (correction manuelle v1).
+  passed    Boolean?
+  createdAt DateTime @default(now())
+}

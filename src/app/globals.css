@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — pendant CSS de src/config/design-tokens.ts.
+ * Toute modification doit être répercutée dans les deux fichiers.
+ * Philosophie : logiciel d'examen officiel. Fond blanc, gris très clairs,
+ * bordures fines 1 px, aucun dégradé, aucune ombre, aucune animation superflue.
+ */
+@theme {
+  --color-background: #ffffff;
+  --color-surface: #fafafa;
+  --color-border: #e5e5e5;
+  --color-foreground: #171717;
+  --color-muted: #525252;
+  --color-accent: #1d4ed8;
+  --color-danger: #dc2626;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --radius-sm: 2px;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
