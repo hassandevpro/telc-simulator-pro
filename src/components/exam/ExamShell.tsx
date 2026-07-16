@@ -98,11 +98,16 @@ export function ExamShell({ sessionId, children }: ExamShellProps) {
   }, [sessionId, hydrate, hydratePlayed, initializeTimer, router, structure]);
 
   const handleExpire = () => {
+    // Ne clôturer QU'UNE fois : sur la page d'abgabe, le timer reste à zéro
+    // et re-déclencherait onExpire à chaque montage — sans cette garde, le
+    // router.replace vers la même URL boucle et la page se fige.
+    if (status !== "IN_PROGRESS") return;
     // Temps écoulé : la session est close, comme au centre d'examen.
-    // La revalidation serveur des délais arrive au Sprint 8.
     setStatus("EXPIRED");
-    void sessionRepository.setStatus(sessionId, "EXPIRED");
-    router.replace(`/session/${sessionId}/abgabe`);
+    void sessionRepository.setStatus(sessionId, "EXPIRED").catch(() => undefined);
+    if (!pathname.endsWith("/abgabe")) {
+      router.replace(`/session/${sessionId}/abgabe`);
+    }
   };
 
   return (
