@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@/components/ui";
-import { EXAM_STRUCTURES } from "@/config/exam-structure";
+import { getStructureForLevel } from "@/config/exam-structure";
 import { sessionRepository } from "@/lib/repository";
 import { createInitialSessionState } from "@/lib/session-factory";
+import type { Level } from "@/types/exam";
 
 export interface StartExamCardProps {
   examId: string;
@@ -29,7 +30,9 @@ export function StartExamCard({ examId, examTitle, level }: StartExamCardProps) 
     const sessionId = crypto.randomUUID().slice(0, 8);
     const state = createInitialSessionState(
       sessionId,
-      EXAM_STRUCTURES.B2,
+      // Structure du bon niveau (B1 : 150 min · B2 : 140 min) — le reste du
+      // squelette est identique entre les deux niveaux.
+      getStructureForLevel(level as Level),
       examId,
     );
     await sessionRepository.save(state);

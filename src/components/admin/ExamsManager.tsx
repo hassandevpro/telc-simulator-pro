@@ -104,10 +104,12 @@ export function ExamsManager() {
           <div className="mt-1">
             <Select
               id="exam-level"
-              options={[{ value: "B2", label: "B2" }]}
+              options={[
+                { value: "B1", label: "B1" },
+                { value: "B2", label: "B2" },
+              ]}
               value={level}
               onChange={(event) => setLevel(event.target.value)}
-              placeholder="B2"
             />
           </div>
         </div>

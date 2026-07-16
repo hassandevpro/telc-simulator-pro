@@ -123,8 +123,26 @@ export const TELC_B2: ExamStructure = {
   },
 };
 
+/**
+ * telc Deutsch B1 (épreuve écrite). Le SQUELETTE officiel est identique à
+ * celui du B2 dans notre modèle — mêmes sections, mêmes Teile, mêmes types
+ * de questions et mêmes nombres d'items (Lesen 5/5/10, Sprachbausteine
+ * 10/10, Hören 5/10/5, Schreiben au choix) : seuls la difficulté du CONTENU
+ * (donnée en base, éditée par l'admin) et le temps imparti diffèrent. On
+ * réutilise donc le squelette du B2 pour éviter toute dérive entre les deux.
+ * Durée : Lesen+Sprachbausteine 90 min · Hören ~30 min · Schreiben 30 min.
+ */
+export const TELC_B1: ExamStructure = {
+  level: "B1",
+  schriftlichePruefung: {
+    durationMinutes: 150,
+    sections: TELC_B2.schriftlichePruefung.sections,
+  },
+};
+
 /** Structures disponibles, indexées par niveau. */
 export const EXAM_STRUCTURES = {
+  B1: TELC_B1,
   B2: TELC_B2,
 } as const;
 
@@ -165,8 +183,8 @@ export function getItemStartNumber(
 }
 
 /**
- * Structure pour un niveau donné. Le B1 n'est pas encore décrit :
- * il retombe sur la structure B2 (à remplacer à l'ajout du TELC_B1).
+ * Structure pour un niveau donné (B1 ou B2). Repli défensif sur le B2 si un
+ * niveau inconnu était un jour passé.
  */
 export function getStructureForLevel(level: Level): ExamStructure {
   return EXAM_STRUCTURES[level as keyof typeof EXAM_STRUCTURES] ?? TELC_B2;
