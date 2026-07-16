@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { signIn } from "next-auth/react";
 import { Button, Card } from "@/components/ui";
 
 const registerFormSchema = z
@@ -29,8 +27,8 @@ const inputClass =
 
 /** Inscription : POST /api/auth/register puis connexion automatique. */
 export function RegisterForm() {
-  const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
 
   const {
     register,
@@ -58,14 +56,31 @@ export function RegisterForm() {
       return;
     }
 
-    await signIn("credentials", {
-      email: values.email,
-      password: values.password,
-      redirect: false,
-    });
-    router.push("/dashboard");
-    router.refresh();
+    // Pas de connexion automatique : l'adresse doit d'abord être confirmée.
+    setRegisteredEmail(values.email);
   };
+
+  if (registeredEmail) {
+    return (
+      <Card className="w-full max-w-sm p-6">
+        <h1 className="text-base font-semibold">Fast geschafft</h1>
+        <p className="mt-3 text-[13px] text-muted">
+          Wir haben eine Bestätigungs-E-Mail an{" "}
+          <span className="font-medium text-foreground">{registeredEmail}</span>{" "}
+          gesendet. Öffnen Sie den Link darin, um Ihr Konto zu aktivieren, und
+          melden Sie sich anschließend an.
+        </p>
+        <p className="mt-4 text-[12px] text-muted">
+          <Link
+            href="/login"
+            className="text-accent underline underline-offset-2"
+          >
+            Zur Anmeldung
+          </Link>
+        </p>
+      </Card>
+    );
+  }
 
   const field = (
     id: keyof RegisterValues,

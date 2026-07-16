@@ -25,31 +25,68 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [authError, setAuthError] = useState<string | null>(null);
+  const [resendInfo, setResendInfo] = useState<string | null>(null);
+
+  const verifyState = searchParams.get("verify");
 
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({ resolver: zodResolver(loginSchema) });
 
   const onSubmit = async (values: LoginValues) => {
     setAuthError(null);
+    setResendInfo(null);
     const result = await signIn("credentials", {
       email: values.email,
       password: values.password,
       redirect: false,
     });
     if (result?.error) {
-      setAuthError("Anmeldung fehlgeschlagen. E-Mail oder Passwort falsch.");
+      setAuthError(
+        "Anmeldung fehlgeschlagen. E-Mail/Passwort falsch — oder E-Mail noch nicht bestätigt.",
+      );
       return;
     }
     router.push(searchParams.get("callbackUrl") ?? "/dashboard");
     router.refresh();
   };
 
+  const resendVerification = async () => {
+    setResendInfo(null);
+    const email = getValues("email");
+    if (!email) {
+      setResendInfo("Bitte zuerst Ihre E-Mail-Adresse eingeben.");
+      return;
+    }
+    await fetch("/api/auth/verify/resend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    setResendInfo(
+      "Falls ein Konto existiert und noch nicht bestätigt ist, wurde eine E-Mail gesendet.",
+    );
+  };
+
   return (
     <Card className="w-full max-w-sm p-6">
       <h1 className="text-base font-semibold">Anmelden</h1>
+
+      {verifyState === "success" ? (
+        <p className="mt-3 rounded-sm border border-border bg-surface px-3 py-2 text-[12px] text-foreground">
+          E-Mail bestätigt. Sie können sich jetzt anmelden.
+        </p>
+      ) : null}
+      {verifyState === "invalid" ? (
+        <p className="mt-3 rounded-sm border border-danger px-3 py-2 text-[12px] text-danger">
+          Der Bestätigungslink ist ungültig oder abgelaufen. Melden Sie sich an
+          und fordern Sie einen neuen Link an.
+        </p>
+      ) : null}
+
       <form
         className="mt-4 space-y-3"
         onSubmit={(event) => void handleSubmit(onSubmit)(event)}
@@ -90,7 +127,19 @@ export function LoginForm() {
         </div>
 
         {authError ? (
-          <p className="text-[12px] text-danger">{authError}</p>
+          <div className="space-y-1">
+            <p className="text-[12px] text-danger">{authError}</p>
+            <button
+              type="button"
+              onClick={() => void resendVerification()}
+              className="text-[12px] text-accent underline underline-offset-2"
+            >
+              Bestätigungs-E-Mail erneut senden
+            </button>
+          </div>
+        ) : null}
+        {resendInfo ? (
+          <p className="text-[12px] text-muted">{resendInfo}</p>
         ) : null}
 
         <Button

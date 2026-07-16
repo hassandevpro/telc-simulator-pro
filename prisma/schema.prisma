@@ -54,11 +54,57 @@ model User {
   name         String
   role         Role          @default(STUDENT)
   plan         Plan          @default(FREE)
+  // Date de vérification de l'e-mail — null tant que non vérifié (la
+  // connexion est refusée dans ce cas).
+  emailVerified DateTime?
+  // Fin de validité du plan payant (abonnement) — null pour FREE.
+  planExpiresAt DateTime?
   // Rattachement à un centre de langue (plan CENTER).
   centerId     String?
   sessions     ExamSession[]
+  payments     Payment[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+}
+
+/** Jeton de vérification d'e-mail (haché) — usage unique, borné dans le temps. */
+model VerificationToken {
+  id        String   @id @default(cuid())
+  email     String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+enum PaymentProvider {
+  FLUTTERWAVE
+  STRIPE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+/** Trace d'un paiement (init → webhook). L'activation du plan est idempotente. */
+model Payment {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    PaymentProvider
+  // tx_ref (Flutterwave) ou id de session Checkout (Stripe).
+  providerRef String          @unique
+  plan        Plan
+  amount      Float
+  currency    String
+  status      PaymentStatus   @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([userId])
 }
 
 model Exam {
