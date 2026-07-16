@@ -26,6 +26,7 @@ export function PartEditor({
   questionType,
 }: PartEditorProps) {
   const [text, setText] = useState("");
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,6 +44,7 @@ export function PartEditor({
       audioUrl: string | null;
       questions: unknown[];
     };
+    setAudioUrl(data.audioUrl);
     setText(
       JSON.stringify(
         {
@@ -102,40 +104,110 @@ export function PartEditor({
   const upload = async (file: File) => {
     setBusy(true);
     setError(null);
+    setStatus(null);
     const { url: uploadedUrl, error: uploadError } =
       await uploadAudioFromBrowser(file);
     if (uploadError || !uploadedUrl) {
       setError(uploadError ?? "Upload fehlgeschlagen.");
-    } else {
-      // Injecte l'URL dans shared.audioUrl du JSON en cours d'édition.
-      try {
-        const parsed = JSON.parse(text) as {
-          shared?: Record<string, unknown>;
-        };
-        parsed.shared = { ...(parsed.shared ?? {}), audioUrl: uploadedUrl };
-        setText(JSON.stringify(parsed, null, 2));
-        setStatus(`Audio hochgeladen: ${uploadedUrl} — jetzt speichern.`);
-      } catch {
-        setStatus(`Audio hochgeladen: ${uploadedUrl}`);
-      }
+      setBusy(false);
+      return;
     }
+
+    // Persiste IMMÉDIATEMENT l'association audio→Teil (PATCH ciblé sur
+    // audioUrl), indépendamment du gros JSON : l'audio est enregistré en
+    // un seul geste, sans exiger que le reste du Teil soit déjà valide.
+    const response = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audioUrl: uploadedUrl }),
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setError(data?.error ?? "Audio konnte nicht gespeichert werden.");
+      setBusy(false);
+      return;
+    }
+
+    setAudioUrl(uploadedUrl);
+    // Reflète aussi l'URL dans le JSON en cours d'édition, pour cohérence.
+    try {
+      const parsed = JSON.parse(text) as { shared?: Record<string, unknown> };
+      parsed.shared = { ...(parsed.shared ?? {}), audioUrl: uploadedUrl };
+      setText(JSON.stringify(parsed, null, 2));
+    } catch {
+      // JSON en cours d'édition invalide : l'audio est déjà persisté en
+      // base, la synchro du textarea se fera au prochain « Zurücksetzen ».
+    }
+    setStatus("Audio gespeichert und mit diesem Teil verknüpft.");
+    setBusy(false);
+  };
+
+  const removeAudio = async () => {
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    const response = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audioUrl: null }),
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setError(data?.error ?? "Audio konnte nicht entfernt werden.");
+      setBusy(false);
+      return;
+    }
+    setAudioUrl(null);
+    try {
+      const parsed = JSON.parse(text) as { shared?: Record<string, unknown> };
+      if (parsed.shared) delete parsed.shared.audioUrl;
+      setText(JSON.stringify(parsed, null, 2));
+    } catch {
+      // idem upload : la base fait foi.
+    }
+    setStatus("Audio entfernt.");
     setBusy(false);
   };
 
   return (
     <div className="space-y-3">
       {sectionId === "hoeren" ? (
-        <Card muted className="flex flex-wrap items-center justify-between gap-3 p-3">
-          <span className="text-[13px]">Audio für diesen Teil hochladen</span>
-          <input
-            type="file"
-            accept="audio/*"
-            className="text-[12px]"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
-            }}
-          />
+        <Card muted className="space-y-3 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-[13px]">
+              Audio für diesen Teil hochladen
+              <span className="ml-2 text-[12px] text-muted">
+                (wird sofort gespeichert)
+              </span>
+            </span>
+            <input
+              type="file"
+              accept="audio/*"
+              disabled={busy}
+              className="text-[12px]"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void upload(file);
+              }}
+            />
+          </div>
+          {audioUrl ? (
+            <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+              <span className="text-[12px] text-muted">Aktuelles Audio:</span>
+              <audio src={audioUrl} controls preload="none" className="h-8" />
+              <Button variant="secondary" disabled={busy} onClick={() => void removeAudio()}>
+                Entfernen
+              </Button>
+            </div>
+          ) : (
+            <p className="border-t border-border pt-3 text-[12px] text-muted">
+              Noch kein Audio mit diesem Teil verknüpft.
+            </p>
+          )}
         </Card>
       ) : null}
 

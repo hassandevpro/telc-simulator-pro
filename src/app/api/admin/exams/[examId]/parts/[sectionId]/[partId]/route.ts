@@ -95,3 +95,47 @@ export async function PUT(
 
   return NextResponse.json({ ok: true, questionCount: questions.length });
 }
+
+/**
+ * Association audio du Teil — écriture CIBLÉE de `audioUrl` uniquement.
+ * Découplée du PUT (qui recrée tout le contenu et exige un JSON complet
+ * valide) : l'upload dans l'éditeur persiste l'audio en un seul geste,
+ * sans dépendre de la validité du reste du Teil. Les questions ne sont
+ * jamais touchées.
+ */
+export async function PATCH(
+  request: Request,
+  {
+    params,
+  }: { params: Promise<{ examId: string; sectionId: string; partId: string }> },
+) {
+  if (!(await requireAdmin())) {
+    return NextResponse.json({ error: "Zugriff verweigert." }, { status: 403 });
+  }
+  const { examId, sectionId, partId } = await params;
+
+  const body = (await request.json().catch(() => null)) as {
+    audioUrl?: unknown;
+  } | null;
+  const audioUrl = body?.audioUrl;
+  if (audioUrl !== null && typeof audioUrl !== "string") {
+    return NextResponse.json(
+      { error: "audioUrl muss ein String oder null sein." },
+      { status: 400 },
+    );
+  }
+
+  const part = await db.examPart.findUnique({
+    where: { examId_sectionId_partId: { examId, sectionId, partId } },
+  });
+  if (!part) {
+    return NextResponse.json({ error: "Teil unbekannt." }, { status: 404 });
+  }
+
+  await db.examPart.update({
+    where: { id: part.id },
+    data: { audioUrl: audioUrl ?? null },
+  });
+
+  return NextResponse.json({ ok: true, audioUrl: audioUrl ?? null });
+}

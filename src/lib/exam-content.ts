@@ -99,10 +99,45 @@ async function getExamContentFromDb(
 
 /* ------------------------------ API publique ------------------------------ */
 
+/**
+ * Titre de l'import en base du Modelltest de démonstration — posé par
+ * /api/admin/exams/import-demo. Sert à retrouver la copie ÉDITABLE de la
+ * démo (audios, éditions admin) et à la faire servir à la place de la
+ * fixture codée en dur.
+ */
+export const DEMO_IMPORT_TITLE = `${DEMO_B2_CONTENT.title} — Import`;
+
+async function findDemoImportExamId(): Promise<string | null> {
+  try {
+    const exam = await db.exam.findFirst({
+      where: { title: DEMO_IMPORT_TITLE },
+      select: { id: true },
+    });
+    return exam?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Alias la démo par défaut (`demo-b2`, fixture) vers son import éditable
+ * en base s'il existe — ainsi les éditions admin (audio Hören inclus) sont
+ * servies au candidat, y compris aux comptes Free, sans dépendre de quel
+ * examId a été figé dans le cookie de session. Tout autre examId est
+ * renvoyé tel quel.
+ */
+async function resolveDbExamId(examId: string): Promise<string> {
+  if (examId === DEMO_B2_CONTENT.examId) {
+    const importId = await findDemoImportExamId();
+    if (importId) return importId;
+  }
+  return examId;
+}
+
 export async function getExamContent(
   examId: string,
 ): Promise<ExamContentBundle | null> {
-  const fromDb = await getExamContentFromDb(examId);
+  const fromDb = await getExamContentFromDb(await resolveDbExamId(examId));
   if (fromDb) return fromDb;
   if (examId === DEMO_B2_CONTENT.examId) return DEMO_B2_CONTENT;
   return null;
@@ -126,28 +161,39 @@ export async function listAvailableExams(
 ): Promise<{ examId: string; title: string; level: Level }[]> {
   const exams: { examId: string; title: string; level: Level }[] = [];
   const { planIncludesFullCatalog } = await import("@/config/plans");
+  const fullCatalog = planIncludesFullCatalog(plan);
+  let demoImportListed = false;
   try {
-    if (!planIncludesFullCatalog(plan)) throw new Error("catalogue gated");
     const published = await db.exam.findMany({
       where: { isPublished: true },
       orderBy: { createdAt: "desc" },
       select: { id: true, title: true, level: true },
     });
     for (const exam of published) {
+      const isDemoImport = exam.title === DEMO_IMPORT_TITLE;
+      // La démo (import éditable) reste offerte à TOUS, y compris Free ;
+      // le reste du catalogue est réservé aux plans payants.
+      if (!fullCatalog && !isDemoImport) continue;
       exams.push({
         examId: exam.id,
-        title: exam.title,
+        // Affiche le titre « propre » de la démo (sans le suffixe technique).
+        title: isDemoImport ? DEMO_B2_CONTENT.title : exam.title,
         level: exam.level as Level,
       });
+      if (isDemoImport) demoImportListed = true;
     }
   } catch {
-    // Base indisponible : seule la démonstration est proposée.
+    // Base indisponible : seule la fixture de démonstration est proposée.
   }
-  exams.push({
-    examId: DEMO_B2_CONTENT.examId,
-    title: DEMO_B2_CONTENT.title,
-    level: DEMO_B2_CONTENT.level,
-  });
+  // Repli fixture uniquement si l'import éditable n'est pas déjà proposé,
+  // pour éviter deux entrées « démo » qui pointent vers le même contenu.
+  if (!demoImportListed) {
+    exams.push({
+      examId: DEMO_B2_CONTENT.examId,
+      title: DEMO_B2_CONTENT.title,
+      level: DEMO_B2_CONTENT.level,
+    });
+  }
   return exams;
 }
 
@@ -170,6 +216,11 @@ export async function resolveSessionExamId(sessionId: string): Promise<string> {
 export async function getExamScoringData(
   examId: string,
 ): Promise<ScoringQuestion[]> {
+  // Même alias que le contenu : si la session tourne sur la démo par
+  // défaut mais qu'un import éditable existe, on corrige sur SES questions
+  // (mêmes identifiants que le contenu servi) — sinon les réponses,
+  // indexées par id de question, ne correspondraient à rien.
+  examId = await resolveDbExamId(examId);
   try {
     const exam = await db.exam.findUnique({
       where: { id: examId },
