@@ -126,7 +126,7 @@ async function findDemoImportExamId(): Promise<string | null> {
  * examId a été figé dans le cookie de session. Tout autre examId est
  * renvoyé tel quel.
  */
-async function resolveDbExamId(examId: string): Promise<string> {
+export async function resolveDbExamId(examId: string): Promise<string> {
   if (examId === DEMO_B2_CONTENT.examId) {
     const importId = await findDemoImportExamId();
     if (importId) return importId;
@@ -198,11 +198,20 @@ export async function listAvailableExams(
 }
 
 /**
- * ExamId d'une session, côté serveur (v1) : posé dans un cookie à la
- * création de la session (StartExamCard) — les sessions vivent en
- * LocalStorage, invisible du serveur. v2 : lecture d'ExamSession en base.
+ * ExamId d'une session, côté serveur. v2 : lecture d'abord de la session
+ * persistée en base (source de vérité, valable sur tout appareil) ; repli
+ * sur le cookie posé à la création (StartExamCard) puis sur la démo.
  */
 export async function resolveSessionExamId(sessionId: string): Promise<string> {
+  try {
+    const session = await db.examSession.findUnique({
+      where: { id: sessionId },
+      select: { examId: true },
+    });
+    if (session) return session.examId;
+  } catch {
+    // Base indisponible : on retombe sur le cookie.
+  }
   const jar = await cookies();
   return jar.get(`telc-exam-${sessionId}`)?.value ?? DEMO_B2_CONTENT.examId;
 }

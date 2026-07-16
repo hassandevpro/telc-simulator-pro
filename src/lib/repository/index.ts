@@ -1,4 +1,4 @@
-import { LocalStorageSessionRepository } from "./local-storage.repository";
+import { ApiSessionRepository } from "./api.repository";
 import type { SessionRepository } from "./session-repository";
 
 export type { SessionRepository } from "./session-repository";
@@ -7,8 +7,9 @@ export { ApiSessionRepository } from "./api.repository";
 
 /**
  * Point d'injection unique du repository.
- * La bascule v1 → v2 (LocalStorage → API/PostgreSQL) se fait ICI,
- * et uniquement ici.
+ * Bascule v1 → v2 effectuée : les sessions sont persistées en base via
+ * l'API (ApiSessionRepository), cloisonnées par utilisateur. La variante
+ * LocalStorage reste exportée pour le développement hors-ligne.
  */
 export const sessionRepository: SessionRepository =
-  new LocalStorageSessionRepository();
+  new ApiSessionRepository();

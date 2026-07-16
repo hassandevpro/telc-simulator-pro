@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
-import { flushAnswers } from "@/hooks/useAutosave";
 import { sessionRepository } from "@/lib/repository";
 import { countWords } from "@/lib/text";
 import { useExamSessionStore } from "@/stores/examSessionStore";
@@ -63,7 +62,10 @@ export function AbgabeView({ sessionId, parts }: AbgabeViewProps) {
     setSubmitting(true);
     setError(null);
     try {
-      flushAnswers(sessionId);
+      // Persiste D'ABORD les dernières réponses (le store est la source
+      // vivante), en attendant l'écriture serveur, PUIS relit l'état complet
+      // — sinon la correction porterait sur des réponses périmées.
+      await sessionRepository.saveAnswers(sessionId, answers);
       const state = await sessionRepository.load(sessionId);
       if (!state) throw new Error("Session introuvable.");
 

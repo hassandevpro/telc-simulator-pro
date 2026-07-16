@@ -16,7 +16,12 @@ const DEBOUNCE_MS = 2000;
 export function flushAnswers(sessionId: string): void {
   const state = useExamSessionStore.getState();
   if (!state.hasUnsavedChanges) return;
-  void sessionRepository.saveAnswers(sessionId, state.answers);
+  // Écriture immédiate (best-effort) : en v2 c'est un appel réseau, on
+  // avale un éventuel rejet — l'autosave debouncé réécrira à la prochaine
+  // modification.
+  void sessionRepository
+    .saveAnswers(sessionId, state.answers)
+    .catch(() => undefined);
   state.markSaved();
 }
 
