@@ -10,6 +10,7 @@ import { listAvailableExams } from "@/lib/exam-content";
 export default async function DashboardPage() {
   const session = await auth();
   const plan = session?.user?.plan;
+  const ownerKey = session?.user?.id;
   const exams = await listAvailableExams(plan);
 
   return (
@@ -33,6 +34,7 @@ export default async function DashboardPage() {
             examId={exam.examId}
             examTitle={exam.title}
             level={exam.level}
+            ownerKey={ownerKey}
           />
         ))}
       </div>
@@ -55,7 +57,7 @@ export default async function DashboardPage() {
         Ihre Sitzungen
       </h2>
       <div className="mt-2">
-        <SessionList />
+        <SessionList ownerKey={ownerKey} />
       </div>
     </section>
   );

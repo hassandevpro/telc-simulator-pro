@@ -13,9 +13,11 @@ export function createInitialSessionState(
   sessionId: string,
   structure: ExamStructure,
   examId = "demo-b2",
+  ownerKey?: string,
 ): PersistedSessionState {
   return {
     sessionId,
+    ownerKey,
     examId,
     status: "AUDIO_CHECK",
     startedAt: null,

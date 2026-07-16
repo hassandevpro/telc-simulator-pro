@@ -14,19 +14,32 @@ const STATUS_LABELS: Record<string, string> = {
   SCORED: "Ausgewertet",
 };
 
+export interface SessionListProps {
+  /** Id du candidat connecté : seules SES sessions sont affichées. Le
+   * stockage v1 étant partagé par navigateur, sans ce filtre un poste
+   * partagé montrerait les sessions de tous les utilisateurs. */
+  ownerKey?: string;
+}
+
 /**
- * Historique des sessions du candidat (v1 : LocalStorage de ce navigateur).
+ * Historique des sessions du candidat (v1 : LocalStorage de ce navigateur),
+ * cloisonné à l'utilisateur courant.
  */
-export function SessionList() {
+export function SessionList({ ownerKey }: SessionListProps) {
   const [sessions, setSessions] = useState<PersistedSessionState[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     void sessionRepository.listSessions().then((list) => {
-      setSessions(list);
+      // N'affiche QUE les sessions de l'utilisateur connecté. Les sessions
+      // sans propriétaire (créées avant le cloisonnement) ne sont montrées
+      // à personne — on ne fuite jamais l'historique d'autrui.
+      setSessions(
+        ownerKey ? list.filter((s) => s.ownerKey === ownerKey) : [],
+      );
       setLoaded(true);
     });
-  }, []);
+  }, [ownerKey]);
 
   if (!loaded) {
     return <p className="text-[13px] text-muted">Wird geladen…</p>;

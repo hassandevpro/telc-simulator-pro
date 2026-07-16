@@ -12,6 +12,9 @@ export interface StartExamCardProps {
   examId: string;
   examTitle: string;
   level: string;
+  /** Id du candidat connecté — estampillé sur la session pour cloisonner
+   * l'historique par utilisateur sur un poste partagé. */
+  ownerKey?: string;
 }
 
 /**
@@ -21,7 +24,12 @@ export interface StartExamCardProps {
  * résolvent le bon contenu, puis entrée — le bootstrap redirige vers
  * le test casque. v2 : POST /api/sessions.
  */
-export function StartExamCard({ examId, examTitle, level }: StartExamCardProps) {
+export function StartExamCard({
+  examId,
+  examTitle,
+  level,
+  ownerKey,
+}: StartExamCardProps) {
   const router = useRouter();
   const [starting, setStarting] = useState(false);
 
@@ -34,6 +42,7 @@ export function StartExamCard({ examId, examTitle, level }: StartExamCardProps) 
       // squelette est identique entre les deux niveaux.
       getStructureForLevel(level as Level),
       examId,
+      ownerKey,
     );
     await sessionRepository.save(state);
     document.cookie = `telc-exam-${sessionId}=${encodeURIComponent(examId)}; path=/; max-age=${60 * 60 * 24 * 30}`;

@@ -1,7 +1,9 @@
+import { auth } from "@/lib/auth";
 import { SessionList } from "@/components/results";
 
-/** Historique des sessions et résultats. */
-export default function ResultsPage() {
+/** Historique des sessions et résultats — cloisonné à l'utilisateur courant. */
+export default async function ResultsPage() {
+  const session = await auth();
   return (
     <section>
       <h1 className="text-xl font-semibold">Ergebnisse</h1>
@@ -9,7 +11,7 @@ export default function ResultsPage() {
         Ihre Prüfungssitzungen auf diesem Gerät.
       </p>
       <div className="mt-4">
-        <SessionList />
+        <SessionList ownerKey={session?.user?.id} />
       </div>
     </section>
   );

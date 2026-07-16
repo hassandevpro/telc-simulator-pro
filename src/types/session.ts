@@ -29,6 +29,15 @@ export type AnswerMap = Record<string, AnswerValue>;
  */
 export interface PersistedSessionState {
   sessionId: string;
+  /**
+   * Propriétaire de la session (id du candidat connecté). Le stockage v1
+   * étant partagé par navigateur, ce champ CLOISONNE l'affichage : la liste
+   * « Ihre Sitzungen » ne montre que les sessions de l'utilisateur courant —
+   * indispensable sur les postes partagés des centres d'examen. Optionnel
+   * pour compatibilité avec les sessions créées avant ce cloisonnement
+   * (elles n'appartiennent à personne et ne sont donc listées pour personne).
+   */
+  ownerKey?: string;
   examId: string;
   status: SessionStatus;
   /** Posé à la remise (ou à l'expiration validée). */
