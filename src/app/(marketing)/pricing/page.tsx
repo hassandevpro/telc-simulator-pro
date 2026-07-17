@@ -2,8 +2,15 @@ import { Card } from "@/components/ui";
 import { PlanCheckout } from "@/components/marketing/PlanCheckout";
 import { CenterPurchase } from "@/components/marketing/CenterPurchase";
 import { PLAN_DEFINITIONS } from "@/config/plans";
-import type { PayablePlan } from "@/config/pricing";
+import { CENTER_SEAT_PRICE, PLAN_PRICES, type PayablePlan } from "@/config/pricing";
 import { WHATSAPP_DISPLAY, whatsappLink } from "@/config/contact";
+
+/** Prix EUR (secondaire) d'un plan, formaté « 9,90 € ». */
+function eurLabel(id: string): string {
+  const eur =
+    id === "CENTER" ? CENTER_SEAT_PRICE.eur : PLAN_PRICES[id as PayablePlan]?.eur;
+  return eur === undefined ? "" : `${eur.toFixed(2).replace(".", ",")} €`;
+}
 
 /** Tarifs — Student / Premium / Center, depuis config/plans.ts. */
 export default function PricingPage() {
@@ -40,6 +47,7 @@ export default function PricingPage() {
                 {plan.period}
               </span>
             </p>
+            <p className="text-[12px] text-muted">≈ {eurLabel(plan.id)}</p>
             <ul className="mt-4 flex-1 space-y-1.5 border-t border-border pt-4">
               {plan.features.map((feature) => (
                 <li key={feature} className="text-[13px] leading-snug">

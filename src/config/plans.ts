@@ -23,7 +23,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
   {
     id: "STUDENT",
     name: "Student",
-    price: "9,90 €",
+    price: "6 500 FCFA",
     period: "pro Monat",
     description: "Für einzelne Kandidatinnen und Kandidaten.",
     features: [
@@ -38,7 +38,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
   {
     id: "PREMIUM",
     name: "Premium",
-    price: "19,90 €",
+    price: "13 000 FCFA",
     period: "pro Monat",
     description: "Für die intensive Prüfungsvorbereitung.",
     features: [
@@ -54,7 +54,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
   {
     id: "CENTER",
     name: "Center",
-    price: "4 €",
+    price: "2 500 FCFA",
     period: "pro Platz / Monat",
     description: "Für Sprachschulen und Prüfungszentren.",
     features: [
