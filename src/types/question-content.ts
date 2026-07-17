@@ -5,12 +5,25 @@
  * src/lib/validators et sera branchée avec les formulaires admin (Sprint 10).
  */
 
+/** Script parlé d'un Teil Hören (transcription pour produire/uploader l'audio). */
+export interface HoerenScriptContent {
+  text: string;
+  speakers: string[];
+  targetSeconds?: number;
+}
+
 /** Champs communs au contenu partagé d'un Teil. */
 export interface SharedBase {
   /** Arbeitsanweisung officielle affichée en tête du Teil. */
   instructions?: string;
   /** Audio du Teil (Hören) — miroir de ExamPart.audioUrl en base. */
   audioUrl?: string;
+  /**
+   * Script audio (Hören) : la transcription à faire lire/enregistrer. Généré
+   * en même temps que les questions et conservé même sans synthèse
+   * ElevenLabs, pour produire l'audio manuellement puis l'uploader.
+   */
+  script?: HoerenScriptContent;
 }
 
 /* ---------- Lesen Teil 1 — TITLE_MATCHING ---------- */

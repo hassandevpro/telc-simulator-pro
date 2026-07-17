@@ -11,6 +11,15 @@ const idText = z.object({ id: z.string().min(1), text: z.string().min(1) });
 const sharedBase = {
   instructions: z.string().optional(),
   audioUrl: z.string().optional(),
+  // Script audio Hören : conservé pour produire/uploader l'audio même sans
+  // synthèse automatique. N'a aucun effet côté candidat.
+  script: z
+    .object({
+      text: z.string().min(1),
+      speakers: z.array(z.string()),
+      targetSeconds: z.number().optional(),
+    })
+    .optional(),
 };
 
 /** Question éditée par l'admin — answerKey null pour WRITING. */

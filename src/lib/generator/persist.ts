@@ -22,19 +22,34 @@ export async function persistGeneratedExam(
     data: { title: exam.title, level: exam.level },
   });
 
+  // Script audio par Teil Hören : conservé dans sharedContent pour produire
+  // et uploader l'audio manuellement même sans clé ElevenLabs.
+  const scriptByKey = new Map(exam.hoerenScripts.map((s) => [s.partKey, s]));
+
   const partIdByKey: Record<string, string> = {};
   let questionCount = 0;
 
   for (const [key, part] of Object.entries(exam.parts)) {
     const [sectionId, partId] = key.split("/");
+    const script = scriptByKey.get(key);
     // Le champ shared ne contient jamais audioUrl ici (l'audio est ajouté
-    // après synthèse) ; on le stocke tel quel comme sharedContent.
+    // après synthèse) ; on y injecte le script Hören s'il existe.
+    const shared = script
+      ? {
+          ...part.shared,
+          script: {
+            text: script.text,
+            speakers: script.speakers,
+            targetSeconds: script.targetSeconds,
+          },
+        }
+      : part.shared;
     const dbPart = await db.examPart.create({
       data: {
         examId: created.id,
         sectionId,
         partId,
-        sharedContent: part.shared as unknown as Prisma.InputJsonValue,
+        sharedContent: shared as unknown as Prisma.InputJsonValue,
         audioUrl: null,
       },
     });

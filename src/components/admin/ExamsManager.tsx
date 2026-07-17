@@ -12,6 +12,17 @@ interface ExamRow {
   questionCount: number;
 }
 
+interface HoerenScriptRow {
+  partKey: string;
+  speakers: string[];
+  targetSeconds: number;
+  text: string;
+}
+
+/** Libellé lisible d'un Teil Hören à partir de sa clé. */
+const scriptLabel = (partKey: string) =>
+  partKey.replace("hoeren/teil-", "Hören Teil ");
+
 /**
  * Gestion des examens : création (les 10 Teile sont dérivés automatiquement
  * de la structure officielle), publication, suppression, import du
@@ -24,6 +35,7 @@ export function ExamsManager() {
   const [title, setTitle] = useState("");
   const [level, setLevel] = useState("B2");
   const [withAudio, setWithAudio] = useState(false);
+  const [scripts, setScripts] = useState<HoerenScriptRow[]>([]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -45,6 +57,7 @@ export function ExamsManager() {
   const call = async (input: string, init?: RequestInit) => {
     setBusy(true);
     setError(null);
+    setScripts([]);
     const response = await fetch(input, init);
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as {
@@ -73,6 +86,7 @@ export function ExamsManager() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setScripts([]);
     const response = await fetch("/api/admin/exams/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -93,6 +107,7 @@ export function ExamsManager() {
       };
       error?: string;
       details?: string[];
+      scripts?: HoerenScriptRow[];
     } | null;
 
     if (!response.ok) {
@@ -112,16 +127,34 @@ export function ExamsManager() {
         else msg += ` Audio nicht erzeugt: ${a.error?.message}`;
       }
       setNotice(msg);
+      setScripts(data?.scripts ?? []);
       setTitle("");
     }
     await load();
     setBusy(false);
   };
 
+  /** Télécharge les trois scripts Hören dans un fichier texte. */
+  const downloadScripts = () => {
+    const body = scripts
+      .map(
+        (s) =>
+          `### ${scriptLabel(s.partKey)} — Sprecher: ${s.speakers.join(", ")} (~${s.targetSeconds}s)\n\n${s.text}`,
+      )
+      .join("\n\n──────────\n\n");
+    const url = URL.createObjectURL(new Blob([body], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "hoeren-skripte.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const importDemo = async () => {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setScripts([]);
     const response = await fetch("/api/admin/exams/import-demo", {
       method: "POST",
     });
@@ -205,6 +238,38 @@ export function ExamsManager() {
 
       {notice ? <p className="text-[13px] text-accent">{notice}</p> : null}
       {error ? <p className="text-[13px] text-danger">{error}</p> : null}
+
+      {scripts.length > 0 ? (
+        <Card className="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[13px] font-medium">
+              Hörskripte ({scripts.length}) — zum Vertonen und Hochladen
+            </p>
+            <Button variant="secondary" onClick={downloadScripts}>
+              Als .txt herunterladen
+            </Button>
+          </div>
+          <p className="mt-1 text-[12px] text-muted">
+            Ohne ElevenLabs: diese Skripte selbst aufnehmen/vertonen und pro Teil
+            im Inhaltseditor als Audio hochladen.
+          </p>
+          <div className="mt-3 space-y-2">
+            {scripts.map((s) => (
+              <details key={s.partKey} className="rounded-sm border border-border">
+                <summary className="cursor-pointer px-3 py-2 text-[13px] font-medium">
+                  {scriptLabel(s.partKey)} · {s.speakers.join(", ")} · ~{s.targetSeconds}s
+                </summary>
+                <textarea
+                  readOnly
+                  value={s.text}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-48 w-full resize-y border-t border-border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed"
+                />
+              </details>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="divide-y divide-border">
         {exams.length === 0 ? (

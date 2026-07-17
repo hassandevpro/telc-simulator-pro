@@ -95,6 +95,49 @@ export async function POST(request: Request) {
   const incomingSubmitted =
     typeof state.submittedAt === "number" ? new Date(state.submittedAt) : null;
 
+  // ── Anti-partage : débit d'UN crédit au démarrage réel du chrono ──
+  // Le débit n'a lieu qu'à la toute première pose de startedAt (entrée dans
+  // l'épreuve), jamais aux sauvegardes suivantes ni au test casque.
+  const isStarting = incomingStarted !== null && !existing?.startedAt;
+  if (isStarting) {
+    const me = await db.user.findUnique({
+      where: { id: userId },
+      select: { role: true, centerId: true, center: { select: { ownerId: true } } },
+    });
+    // SUPER_ADMIN exempté (tests). Un étudiant de centre consomme le pool du
+    // propriétaire du centre ; sinon son propre solde.
+    if (me?.role !== "SUPER_ADMIN") {
+      // « Déjà fait » : si l'utilisateur a DÉJÀ une session terminée sur CET
+      // examen, il l'a déjà débloqué — le rejouer ne redébite pas de crédit.
+      const alreadyDone = await db.examSession.findFirst({
+        where: {
+          userId,
+          examId,
+          status: { in: ["SUBMITTED", "SCORED"] },
+          id: { not: state.sessionId },
+        },
+        select: { id: true },
+      });
+      if (!alreadyDone) {
+        const accountId =
+          me?.centerId && me.center?.ownerId ? me.center.ownerId : userId;
+        const debited = await db.user.updateMany({
+          where: { id: accountId, credits: { gt: 0 } },
+          data: { credits: { decrement: 1 } },
+        });
+        if (debited.count === 0) {
+          return NextResponse.json(
+            {
+              error: "Keine Credits mehr. Bitte Abo verlängern oder upgraden.",
+              code: "NO_CREDITS",
+            },
+            { status: 402 },
+          );
+        }
+      }
+    }
+  }
+
   await db.examSession.upsert({
     where: { id: state.sessionId },
     create: {

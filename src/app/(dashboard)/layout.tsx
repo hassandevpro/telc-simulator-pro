@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { SignOutButton } from "@/components/auth";
+import { getCurrentUserPlan } from "@/lib/billing";
+import { AccountMenu } from "@/components/account";
 
 /**
  * Layout de l'espace candidat connecté (dashboard, résultats).
@@ -13,6 +14,7 @@ export default async function DashboardLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const session = await auth();
   const role = session?.user?.role;
+  const userId = session?.user?.id;
 
   // Un acheteur self-service devient CENTER_ADMIN, mais son JWT ne le
   // reflète qu'à la reconnexion : on affiche « Mein Zentrum » dès qu'il
@@ -20,11 +22,29 @@ export default async function DashboardLayout({
   const ownsCenter =
     role === "CENTER_ADMIN"
       ? true
-      : session?.user?.id
+      : userId
         ? !!(await db.center
-            .findUnique({ where: { ownerId: session.user.id }, select: { id: true } })
+            .findUnique({ where: { ownerId: userId }, select: { id: true } })
             .catch(() => null))
         : false;
+
+  // Infos du compte pour le menu (avatar) : plan effectif + solde de crédits.
+  const plan = await getCurrentUserPlan();
+  let credits = 0;
+  if (userId) {
+    const me = await db.user
+      .findUnique({
+        where: { id: userId },
+        select: {
+          credits: true,
+          centerId: true,
+          center: { select: { owner: { select: { credits: true } } } },
+        },
+      })
+      .catch(() => null);
+    credits =
+      me?.centerId && me.center?.owner ? me.center.owner.credits : (me?.credits ?? 0);
+  }
 
   return (
     <div className="min-h-screen">
@@ -43,17 +63,14 @@ export default async function DashboardLayout({
             <Link href="/results" className="hover:text-foreground">
               Ergebnisse
             </Link>
-            {role === "SUPER_ADMIN" ? (
-              <Link href="/admin" className="hover:text-foreground">
-                Administration
-              </Link>
-            ) : null}
-            {ownsCenter ? (
-              <Link href="/center" className="hover:text-foreground">
-                Mein Zentrum
-              </Link>
-            ) : null}
-            <SignOutButton />
+            <AccountMenu
+              name={session?.user?.name ?? ""}
+              email={session?.user?.email ?? ""}
+              plan={plan}
+              credits={credits}
+              isSuperAdmin={role === "SUPER_ADMIN"}
+              ownsCenter={ownsCenter}
+            />
           </nav>
         </div>
       </header>

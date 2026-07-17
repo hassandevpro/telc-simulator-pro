@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
+import { CENTER_CREDITS_PER_SEAT, creditsForPlan } from "@/config/credits";
 
 /**
  * Activation de plan et lecture du plan effectif.
@@ -38,7 +39,13 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
     db.payment.update({ where: { id: payment.id }, data: { status: "SUCCESS" } }),
     db.user.update({
       where: { id: payment.userId },
-      data: { plan: payment.plan, planExpiresAt },
+      data: {
+        plan: payment.plan,
+        planExpiresAt,
+        // Dotation de crédits ajoutée au solde (0 pour CENTER, crédité au
+        // siège ci-dessous). Consommés ensuite examen par examen.
+        credits: { increment: creditsForPlan(payment.plan) },
+      },
     }),
   ]);
 
@@ -67,9 +74,14 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
     }
     // Le rôle du JWT ne se rafraîchit qu'à la reconnexion ; l'accès à
     // /center est néanmoins possible via la propriété du centre (requireCenterAdmin).
+    // Le pool de crédits du centre = sièges achetés × barème (consommé par
+    // le propriétaire ET ses étudiants membres).
     await db.user.update({
       where: { id: payment.userId },
-      data: { role: "CENTER_ADMIN" },
+      data: {
+        role: "CENTER_ADMIN",
+        credits: { increment: addSeats * CENTER_CREDITS_PER_SEAT },
+      },
     });
   }
   return true;

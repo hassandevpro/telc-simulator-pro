@@ -69,6 +69,14 @@ export async function POST(request: Request) {
       level: exam.level,
       questionCount: persisted.questionCount,
       audio,
+      // Scripts Hören TOUJOURS renvoyés — sans ElevenLabs, ils servent à
+      // enregistrer l'audio à la main puis à l'uploader par Teil.
+      scripts: exam.hoerenScripts.map((s) => ({
+        partKey: s.partKey,
+        speakers: s.speakers,
+        targetSeconds: s.targetSeconds,
+        text: s.text,
+      })),
     },
     { status: 201 },
   );

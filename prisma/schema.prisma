@@ -59,6 +59,10 @@ model User {
   emailVerified DateTime?
   // Fin de validité du plan payant (abonnement) — null pour FREE.
   planExpiresAt DateTime?
+  // Crédits de passage d'examen (anti-partage). 1 crédit = 1 examen, débité
+  // au démarrage du chrono. Rechargés à chaque paiement (config/credits.ts).
+  // Pour un étudiant de centre, le pool consommé est celui du propriétaire.
+  credits      Int           @default(2)
   // Rattachement à un centre de langue en tant qu'ÉTUDIANT membre.
   centerId     String?
   center       Center?       @relation("CenterMembers", fields: [centerId], references: [id])

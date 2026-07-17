@@ -2,7 +2,8 @@ import { auth } from "@/lib/auth";
 import { StartExamCard } from "@/components/exam/StartExamCard";
 import { SessionList } from "@/components/results";
 import { getCurrentUserPlan } from "@/lib/billing";
-import { listAvailableExams } from "@/lib/exam-content";
+import { listAvailableExams, resolveDbExamId } from "@/lib/exam-content";
+import { db } from "@/lib/db";
 
 /**
  * Dashboard candidat : examen disponible + sessions de l'appareil.
@@ -19,6 +20,39 @@ export default async function DashboardPage({
   const ownerKey = session?.user?.id;
   const exams = await listAvailableExams(plan);
   const { payment } = await searchParams;
+
+  // Crédits (anti-partage) + examens déjà terminés par ce candidat.
+  // Un étudiant de centre consomme/voit le pool de son centre (propriétaire).
+  let credits = 0;
+  let isSuperAdmin = false;
+  const doneExamIds = new Set<string>();
+  if (ownerKey) {
+    const me = await db.user.findUnique({
+      where: { id: ownerKey },
+      select: {
+        credits: true,
+        role: true,
+        centerId: true,
+        center: { select: { owner: { select: { credits: true } } } },
+      },
+    });
+    isSuperAdmin = me?.role === "SUPER_ADMIN";
+    credits =
+      me?.centerId && me.center?.owner ? me.center.owner.credits : (me?.credits ?? 0);
+    const doneSessions = await db.examSession.findMany({
+      where: { userId: ownerKey, status: { in: ["SUBMITTED", "SCORED"] } },
+      select: { examId: true },
+    });
+    doneSessions.forEach((s) => doneExamIds.add(s.examId));
+  }
+  // Les examId d'affichage (ex. « demo-b2 ») sont résolus vers l'id en base
+  // pour être comparés aux sessions terminées.
+  const examCards = await Promise.all(
+    exams.map(async (exam) => ({
+      exam,
+      done: doneExamIds.has(await resolveDbExamId(exam.examId)),
+    })),
+  );
 
   return (
     <section>
@@ -38,17 +72,29 @@ export default async function DashboardPage({
         </p>
       ) : null}
 
-      <h2 className="mt-6 text-[13px] font-semibold uppercase tracking-wide text-muted">
-        Verfügbare Prüfungen
-      </h2>
+      <div className="mt-6 flex items-center justify-between">
+        <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">
+          Verfügbare Prüfungen
+        </h2>
+        {!isSuperAdmin ? (
+          <span className="text-[12px] text-muted">
+            Guthaben:{" "}
+            <span className={credits > 0 ? "font-medium" : "font-medium text-danger"}>
+              {credits} Credit{credits === 1 ? "" : "s"}
+            </span>
+          </span>
+        ) : null}
+      </div>
       <div className="mt-2 space-y-2">
-        {exams.map((exam) => (
+        {examCards.map(({ exam, done }) => (
           <StartExamCard
             key={exam.examId}
             examId={exam.examId}
             examTitle={exam.title}
             level={exam.level}
             ownerKey={ownerKey}
+            done={done}
+            blocked={!isSuperAdmin && !done && credits <= 0}
           />
         ))}
       </div>
