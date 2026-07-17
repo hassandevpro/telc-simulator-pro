@@ -84,7 +84,7 @@ export async function POST(request: Request) {
 
   const existing = await db.examSession.findUnique({
     where: { id: state.sessionId },
-    select: { userId: true, startedAt: true, submittedAt: true },
+    select: { userId: true, startedAt: true, submittedAt: true, status: true },
   });
   if (existing && existing.userId !== userId) {
     return NextResponse.json({ error: "Zugriff verweigert." }, { status: 403 });
@@ -95,11 +95,21 @@ export async function POST(request: Request) {
   const incomingSubmitted =
     typeof state.submittedAt === "number" ? new Date(state.submittedAt) : null;
 
-  // ── Anti-partage : débit d'UN crédit au démarrage réel du chrono ──
-  // Le débit n'a lieu qu'à la toute première pose de startedAt (entrée dans
-  // l'épreuve), jamais aux sauvegardes suivantes ni au test casque.
+  // ── Anti-partage (crédits) ──
+  // Verrou au DÉMARRAGE : impossible d'entrer dans l'épreuve à 0 crédit
+  //   (pose de startedAt) — mais aucun débit à ce stade.
+  // Débit à la SOUMISSION : le crédit baisse quand l'examen est rendu
+  //   (première entrée en SUBMITTED/SCORED).
+  // Rejouer un examen déjà terminé ne fait ni verrou ni débit.
+  const COMPLETED = ["SUBMITTED", "SCORED"] as const;
   const isStarting = incomingStarted !== null && !existing?.startedAt;
-  if (isStarting) {
+  const wasCompleted = existing
+    ? (COMPLETED as readonly string[]).includes(existing.status)
+    : false;
+  const isSubmitting =
+    (COMPLETED as readonly string[]).includes(state.status) && !wasCompleted;
+
+  if (isStarting || isSubmitting) {
     const me = await db.user.findUnique({
       where: { id: userId },
       select: { role: true, centerId: true, center: { select: { ownerId: true } } },
@@ -107,8 +117,8 @@ export async function POST(request: Request) {
     // SUPER_ADMIN exempté (tests). Un étudiant de centre consomme le pool du
     // propriétaire du centre ; sinon son propre solde.
     if (me?.role !== "SUPER_ADMIN") {
-      // « Déjà fait » : si l'utilisateur a DÉJÀ une session terminée sur CET
-      // examen, il l'a déjà débloqué — le rejouer ne redébite pas de crédit.
+      // « Déjà fait » : une session terminée sur CET examen l'a déjà débloqué
+      // — le rejouer ne coûte rien (ni verrou, ni débit).
       const alreadyDone = await db.examSession.findFirst({
         where: {
           userId,
@@ -121,18 +131,30 @@ export async function POST(request: Request) {
       if (!alreadyDone) {
         const accountId =
           me?.centerId && me.center?.ownerId ? me.center.ownerId : userId;
-        const debited = await db.user.updateMany({
-          where: { id: accountId, credits: { gt: 0 } },
-          data: { credits: { decrement: 1 } },
-        });
-        if (debited.count === 0) {
-          return NextResponse.json(
-            {
-              error: "Keine Credits mehr. Bitte Abo verlängern oder upgraden.",
-              code: "NO_CREDITS",
-            },
-            { status: 402 },
-          );
+
+        if (isStarting) {
+          // Verrou d'entrée : au moins 1 crédit requis, sans débiter.
+          const acct = await db.user.findUnique({
+            where: { id: accountId },
+            select: { credits: true },
+          });
+          if ((acct?.credits ?? 0) <= 0) {
+            return NextResponse.json(
+              {
+                error: "Keine Credits mehr. Bitte Abo verlängern oder upgraden.",
+                code: "NO_CREDITS",
+              },
+              { status: 402 },
+            );
+          }
+        }
+
+        if (isSubmitting) {
+          // Débit d'UN crédit à la remise de l'examen (clampé à 0).
+          await db.user.updateMany({
+            where: { id: accountId, credits: { gt: 0 } },
+            data: { credits: { decrement: 1 } },
+          });
         }
       }
     }
