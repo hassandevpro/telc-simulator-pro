@@ -10,8 +10,9 @@ export default function PricingPage() {
     <section>
       <h1 className="text-2xl font-semibold">Preise</h1>
       <p className="mt-2 max-w-xl text-[14px] text-muted">
-        Der Demo-Modelltest ist kostenlos — Konto erstellen und sofort unter
-        Prüfungsbedingungen üben. Für das volle Angebot:
+        Kostenlos starten mit 2 Gratis-Credits — Konto erstellen und sofort
+        unter Prüfungsbedingungen üben. 1 Credit = 1 komplette Prüfung; bereits
+        absolvierte Prüfungen wiederholen Sie ohne Credit. Für mehr:
       </p>
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">

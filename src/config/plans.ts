@@ -6,6 +6,8 @@
  * l'attribution des plans se fait via l'administration.
  */
 
+import { CENTER_CREDITS_PER_SEAT, PLAN_CREDITS } from "./credits";
+
 export interface PlanDefinition {
   id: "STUDENT" | "CENTER" | "PREMIUM";
   name: string;
@@ -28,7 +30,8 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
       "Alle veröffentlichten Modelltests",
       "Originalgetreue Prüfungsumgebung",
       "Sofortige Auswertung mit Bestehensprognose",
-      "Unbegrenzte Prüfungsdurchläufe",
+      `${PLAN_CREDITS.STUDENT} Prüfungscredits pro Monat`,
+      "Bereits absolvierte Prüfungen ohne Credit wiederholen",
     ],
     cta: { label: "Konto erstellen", href: "/register" },
   },
@@ -40,6 +43,7 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
     description: "Für die intensive Prüfungsvorbereitung.",
     features: [
       "Alles aus Student",
+      `${PLAN_CREDITS.PREMIUM} Prüfungscredits pro Monat`,
       "Detaillierte Fortschrittsauswertung",
       "Priorisierter Support",
       "Frühzugang zu neuen Modelltests",
@@ -55,9 +59,9 @@ export const PLAN_DEFINITIONS: PlanDefinition[] = [
     description: "Für Sprachschulen und Prüfungszentren.",
     features: [
       "Kontingent nach Anzahl Studierender",
+      `${CENTER_CREDITS_PER_SEAT} Credits pro Platz und Monat (geteilter Pool)`,
       "Einladungslink + Schlüssel für den Beitritt",
       "Zentrale Verwaltung der Studierenden",
-      "Voller Zugang zu den Modelltests für alle Plätze",
     ],
     cta: {
       label: "Kontakt aufnehmen",
