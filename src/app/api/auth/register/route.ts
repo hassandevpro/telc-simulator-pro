@@ -9,6 +9,13 @@ const registerSchema = z.object({
   name: z.string().min(2).max(100),
   email: z.email(),
   password: z.string().min(8).max(200),
+  // Numéro de téléphone (WhatsApp) — 6 à 20 caractères, chiffres et
+  // symboles usuels (+, espaces, tirets). Sert au paiement et au contact.
+  phone: z
+    .string()
+    .min(6)
+    .max(20)
+    .regex(/^[+()\d][\d\s()-]{5,}$/, "Numéro invalide."),
 });
 
 /** Inscription candidat : validation Zod, unicité e-mail, hash bcrypt. */
@@ -17,7 +24,10 @@ export async function POST(request: Request) {
   const parsed = registerSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Ungültige Angaben. Passwort: mindestens 8 Zeichen." },
+      {
+        error:
+          "Ungültige Angaben. Passwort: mindestens 8 Zeichen; bitte auch eine gültige Telefonnummer angeben.",
+      },
       { status: 400 },
     );
   }
@@ -44,6 +54,7 @@ export async function POST(request: Request) {
       data: {
         email,
         name: parsed.data.name,
+        phone: parsed.data.phone.trim(),
         passwordHash: await bcrypt.hash(parsed.data.password, 10),
         role: "STUDENT",
         plan: "FREE",

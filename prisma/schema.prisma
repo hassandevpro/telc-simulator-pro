@@ -50,8 +50,12 @@ enum SessionStatus {
 model User {
   id           String        @id @default(cuid())
   email        String        @unique
-  passwordHash String
+  // Null pour les comptes créés via Google (OAuth) : pas de mot de passe local.
+  passwordHash String?
   name         String
+  // Numéro de téléphone (WhatsApp) saisi à l'inscription — sert au paiement
+  // et au contact. Null pour les comptes Google tant qu'il n'est pas renseigné.
+  phone        String?
   role         Role          @default(STUDENT)
   plan         Plan          @default(FREE)
   // Date de vérification de l'e-mail — null tant que non vérifié (la

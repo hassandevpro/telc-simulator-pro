@@ -100,17 +100,23 @@ export default async function DashboardPage({
       </div>
 
       {plan === "FREE" ? (
-        <p className="mt-3 text-[12px] text-muted">
-          Ihr Plan (Free) umfasst den Demo-Modelltest. Alle veröffentlichten
-          Modelltests erhalten Sie ab dem Plan Student —{" "}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-sm border border-accent bg-surface px-4 py-3">
+          <div>
+            <p className="text-[14px] font-semibold">
+              Nur der Demo-Modelltest im Free-Plan
+            </p>
+            <p className="mt-0.5 text-[13px] text-muted">
+              Schalten Sie ab dem Plan Student alle Modelltests frei und üben
+              Sie unbegrenzt unter echten Prüfungsbedingungen.
+            </p>
+          </div>
           <a
             href="/pricing"
-            className="text-accent underline underline-offset-2"
+            className="inline-flex items-center whitespace-nowrap rounded-sm bg-accent px-3 py-1.5 text-[13px] font-medium text-white"
           >
-            Preise ansehen
+            Jetzt freischalten
           </a>
-          .
-        </p>
+        </div>
       ) : null}
 
       <h2 className="mt-8 text-[13px] font-semibold uppercase tracking-wide text-muted">

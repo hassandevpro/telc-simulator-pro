@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "./db";
@@ -20,6 +21,12 @@ const credentialsSchema = z.object({
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
+    // Connexion / inscription via Google (OAuth). Le compte est créé ou
+    // rattaché dans le callback signIn (voir ci-dessous) : stratégie JWT,
+    // sans adapter Prisma, donc c'est nous qui gérons l'upsert en base.
+    Google({
+      allowDangerousEmailAccountLinking: true,
+    }),
     Credentials({
       name: "Identifiants",
       credentials: {
@@ -34,6 +41,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { email: parsed.data.email.toLowerCase() },
         });
         if (!user) return null;
+
+        // Compte Google (sans mot de passe local) : la connexion par
+        // identifiants est impossible — il faut passer par « Mit Google ».
+        if (!user.passwordHash) return null;
 
         const valid = await bcrypt.compare(
           parsed.data.password,
@@ -61,4 +72,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
+  callbacks: {
+    // On conserve les callbacks edge-safe (authorized/jwt/session) et on
+    // ajoute signIn, qui a besoin de Prisma (donc vit ici, pas dans la config).
+    ...authConfig.callbacks,
+    /**
+     * Provider Google : upsert du compte candidat (stratégie JWT, sans
+     * adapter). On (re)crée l'utilisateur si besoin, puis on renseigne
+     * `user.id/role/plan` avec les valeurs EN BASE pour que le JWT porte
+     * notre identifiant interne (et non le « sub » Google).
+     */
+    async signIn({ user, account }) {
+      if (account?.provider !== "google") return true;
+      const email = user.email?.toLowerCase();
+      if (!email) return false;
+
+      const existing = await db.user.findUnique({ where: { email } });
+      const dbUser =
+        existing ??
+        (await db.user.create({
+          data: {
+            email,
+            name: user.name ?? email.split("@")[0],
+            passwordHash: null,
+            role: "STUDENT",
+            plan: "FREE",
+            // Compte Google : e-mail déjà vérifié par Google.
+            emailVerified: new Date(),
+          },
+        }));
+
+      // On propage l'identité interne vers le JWT (callback jwt).
+      user.id = dbUser.id;
+      user.role = dbUser.role;
+      user.plan = dbUser.plan;
+      return true;
+    },
+  },
 });

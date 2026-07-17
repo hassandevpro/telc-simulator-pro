@@ -13,9 +13,27 @@ function eurLabel(id: string): string {
 }
 
 /** Tarifs — Student / Premium / Center, depuis config/plans.ts. */
-export default function PricingPage() {
+export default async function PricingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ welcome?: string }>;
+}) {
+  const { welcome } = await searchParams;
   return (
     <section>
+      {welcome ? (
+        <Card className="mb-6 border-accent bg-surface p-4">
+          <p className="text-[14px] font-semibold">
+            Willkommen — Ihr Konto ist aktiv 🎉
+          </p>
+          <p className="mt-0.5 text-[13px] text-muted">
+            Sie starten mit 2 Gratis-Credits. Schalten Sie jetzt alle
+            Modelltests frei und üben Sie unbegrenzt unter echten
+            Prüfungsbedingungen — wählen Sie unten Ihren Plan.
+          </p>
+        </Card>
+      ) : null}
+
       <h1 className="text-2xl font-semibold">Preise</h1>
       <p className="mt-2 max-w-xl text-[14px] text-muted">
         Kostenlos starten mit 2 Gratis-Credits — Konto erstellen und sofort

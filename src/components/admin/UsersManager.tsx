@@ -7,9 +7,15 @@ interface UserRow {
   id: string;
   email: string;
   name: string;
+  phone: string | null;
   role: string;
   plan: string;
   createdAt: string;
+}
+
+/** Numéro nettoyé (garde le +, chiffres) pour un lien wa.me. */
+function waLink(phone: string): string {
+  return `https://wa.me/${phone.replace(/[^\d]/g, "")}`;
 }
 
 const ROLES = ["STUDENT", "CENTER_ADMIN", "SUPER_ADMIN"];
@@ -73,6 +79,18 @@ export function UsersManager() {
               <div className="min-w-56">
                 <p className="font-medium">{user.name}</p>
                 <p className="text-[12px] text-muted">{user.email}</p>
+                {user.phone ? (
+                  <a
+                    href={waLink(user.phone)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[12px] text-accent underline underline-offset-2"
+                  >
+                    {user.phone}
+                  </a>
+                ) : (
+                  <p className="text-[12px] text-muted/70">— kein Telefon</p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Select

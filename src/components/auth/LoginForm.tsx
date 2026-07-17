@@ -8,6 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { signIn } from "next-auth/react";
 import { Button, Card } from "@/components/ui";
+import { GoogleButton } from "./GoogleButton";
 
 const loginSchema = z.object({
   email: z.email("Bitte eine gültige E-Mail-Adresse angeben."),
@@ -151,6 +152,17 @@ export function LoginForm() {
           {isSubmitting ? "Wird angemeldet…" : "Anmelden"}
         </Button>
       </form>
+
+      <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted">
+        <span className="h-px flex-1 bg-border" />
+        oder
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      <GoogleButton
+        label="Mit Google anmelden"
+        callbackUrl={searchParams.get("callbackUrl") ?? "/dashboard"}
+      />
+
       <p className="mt-4 text-[12px] text-muted">
         Noch kein Konto?{" "}
         <Link

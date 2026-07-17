@@ -13,6 +13,7 @@ export async function GET() {
       id: true,
       email: true,
       name: true,
+      phone: true,
       role: true,
       plan: true,
       createdAt: true,

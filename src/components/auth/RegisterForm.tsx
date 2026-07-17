@@ -8,11 +8,16 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { signIn } from "next-auth/react";
 import { Button, Card } from "@/components/ui";
+import { GoogleButton } from "./GoogleButton";
 
 const registerFormSchema = z
   .object({
     name: z.string().min(2, "Bitte Ihren Namen angeben."),
     email: z.email("Bitte eine gültige E-Mail-Adresse angeben."),
+    phone: z
+      .string()
+      .min(6, "Bitte eine gültige Telefonnummer angeben.")
+      .regex(/^[+()\d][\d\s()-]{5,}$/, "Bitte eine gültige Telefonnummer angeben."),
     password: z.string().min(8, "Mindestens 8 Zeichen."),
     confirm: z.string(),
   })
@@ -47,6 +52,7 @@ export function RegisterForm() {
       body: JSON.stringify({
         name: values.name,
         email: values.email,
+        phone: values.phone,
         password: values.password,
       }),
     });
@@ -69,13 +75,14 @@ export function RegisterForm() {
       return;
     }
 
-    // Vérification désactivée : connexion immédiate.
+    // Vérification désactivée : connexion immédiate, puis on pousse le
+    // nouveau compte vers les tarifs (achat) avec un message de bienvenue.
     await signIn("credentials", {
       email: values.email,
       password: values.password,
       redirect: false,
     });
-    router.push("/dashboard");
+    router.push("/pricing?welcome=1");
     router.refresh();
   };
 
@@ -133,6 +140,7 @@ export function RegisterForm() {
       >
         {field("name", "Name", "text", "name")}
         {field("email", "E-Mail", "email", "email")}
+        {field("phone", "Telefon (WhatsApp)", "tel", "tel")}
         {field("password", "Passwort", "password", "new-password")}
         {field("confirm", "Passwort wiederholen", "password", "new-password")}
 
@@ -149,6 +157,17 @@ export function RegisterForm() {
           {isSubmitting ? "Wird registriert…" : "Konto erstellen"}
         </Button>
       </form>
+
+      <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted">
+        <span className="h-px flex-1 bg-border" />
+        oder
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      <GoogleButton
+        label="Mit Google registrieren"
+        callbackUrl="/pricing?welcome=1"
+      />
+
       <p className="mt-4 text-[12px] text-muted">
         Bereits registriert?{" "}
         <Link
