@@ -1,12 +1,16 @@
 import Link from "next/link";
+import { auth } from "@/lib/auth";
 
 /**
  * Layout des pages publiques (landing, pricing).
  * Sobriété volontaire — même langage visuel que le simulateur.
  */
-export default function MarketingLayout({
+export default async function MarketingLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const session = await auth();
+  const loggedIn = !!session?.user?.id;
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border">
@@ -18,15 +22,27 @@ export default function MarketingLayout({
             <Link href="/pricing" className="hover:text-foreground">
               Preise
             </Link>
-            <Link href="/login" className="hover:text-foreground">
-              Anmelden
-            </Link>
-            <Link
-              href="/register"
-              className="border border-border px-2.5 py-1 rounded-sm hover:bg-surface"
-            >
-              Registrieren
-            </Link>
+            {loggedIn ? (
+              // Déjà connecté : pas de « Anmelden » — accès direct à l'app.
+              <Link
+                href="/dashboard"
+                className="border border-border px-2.5 py-1 rounded-sm hover:bg-surface"
+              >
+                Zur App
+              </Link>
+            ) : (
+              <>
+                <Link href="/login" className="hover:text-foreground">
+                  Anmelden
+                </Link>
+                <Link
+                  href="/register"
+                  className="border border-border px-2.5 py-1 rounded-sm hover:bg-surface"
+                >
+                  Registrieren
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </header>
