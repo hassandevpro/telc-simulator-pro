@@ -41,10 +41,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         );
         if (!valid) return null;
 
-        // Connexion refusée tant que l'e-mail n'est pas confirmé. On ne
-        // distingue pas ce cas d'un mauvais mot de passe côté client (pas
-        // de fuite) : le formulaire propose systématiquement le renvoi.
-        if (!user.emailVerified) return null;
+        // Connexion refusée tant que l'e-mail n'est pas confirmé — UNIQUEMENT
+        // si la vérification est activée (EMAIL_VERIFICATION_REQUIRED="true").
+        // Sinon on ne bloque pas (pas encore d'envoi d'e-mails opérationnel).
+        if (
+          process.env.EMAIL_VERIFICATION_REQUIRED === "true" &&
+          !user.emailVerified
+        ) {
+          return null;
+        }
 
         return {
           id: user.id,

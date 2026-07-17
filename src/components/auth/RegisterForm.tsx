@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { signIn } from "next-auth/react";
 import { Button, Card } from "@/components/ui";
 
 const registerFormSchema = z
@@ -27,6 +29,7 @@ const inputClass =
 
 /** Inscription : POST /api/auth/register puis connexion automatique. */
 export function RegisterForm() {
+  const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
 
@@ -56,8 +59,24 @@ export function RegisterForm() {
       return;
     }
 
-    // Pas de connexion automatique : l'adresse doit d'abord être confirmée.
-    setRegisteredEmail(values.email);
+    const data = (await response.json().catch(() => null)) as {
+      verificationRequired?: boolean;
+    } | null;
+
+    if (data?.verificationRequired) {
+      // Vérification active : on invite à confirmer l'e-mail, pas de connexion.
+      setRegisteredEmail(values.email);
+      return;
+    }
+
+    // Vérification désactivée : connexion immédiate.
+    await signIn("credentials", {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+    });
+    router.push("/dashboard");
+    router.refresh();
   };
 
   if (registeredEmail) {

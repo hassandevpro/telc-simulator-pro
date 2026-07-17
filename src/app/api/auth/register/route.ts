@@ -33,6 +33,13 @@ export async function POST(request: Request) {
       );
     }
 
+    // La vérification d'e-mail est OPTIONNELLE : activée uniquement si
+    // EMAIL_VERIFICATION_REQUIRED="true" (à mettre quand Resend + domaine
+    // d'envoi sont prêts). Par défaut, le compte est créé déjà vérifié et
+    // la connexion est immédiate — on ne bloque personne faute d'e-mail.
+    const verificationRequired =
+      process.env.EMAIL_VERIFICATION_REQUIRED === "true";
+
     await db.user.create({
       data: {
         email,
@@ -40,23 +47,24 @@ export async function POST(request: Request) {
         passwordHash: await bcrypt.hash(parsed.data.password, 10),
         role: "STUDENT",
         plan: "FREE",
-        // emailVerified reste null : la connexion est refusée tant que
-        // l'adresse n'est pas confirmée.
+        emailVerified: verificationRequired ? null : new Date(),
       },
     });
 
-    // Envoi du lien de vérification (best-effort : un échec d'e-mail ne doit
-    // pas faire échouer l'inscription — l'utilisateur pourra le renvoyer).
-    try {
-      const token = await createVerificationToken(email);
-      const verifyUrl = `${new URL(request.url).origin}/api/auth/verify?token=${token}`;
-      await sendVerificationEmail(email, verifyUrl);
-    } catch (cause) {
-      console.error("[register] envoi vérification échoué", cause);
+    if (verificationRequired) {
+      // Envoi du lien de vérification (best-effort : un échec d'e-mail ne
+      // doit pas faire échouer l'inscription — renvoi possible ensuite).
+      try {
+        const token = await createVerificationToken(email);
+        const verifyUrl = `${new URL(request.url).origin}/api/auth/verify?token=${token}`;
+        await sendVerificationEmail(email, verifyUrl);
+      } catch (cause) {
+        console.error("[register] envoi vérification échoué", cause);
+      }
     }
 
     return NextResponse.json(
-      { ok: true, verificationRequired: true },
+      { ok: true, verificationRequired },
       { status: 201 },
     );
   } catch {
