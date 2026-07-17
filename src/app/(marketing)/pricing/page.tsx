@@ -3,6 +3,7 @@ import { PlanCheckout } from "@/components/marketing/PlanCheckout";
 import { CenterPurchase } from "@/components/marketing/CenterPurchase";
 import { PLAN_DEFINITIONS } from "@/config/plans";
 import type { PayablePlan } from "@/config/pricing";
+import { WHATSAPP_DISPLAY, whatsappLink } from "@/config/contact";
 
 /** Tarifs — Student / Premium / Center, depuis config/plans.ts. */
 export default function PricingPage() {
@@ -57,10 +58,30 @@ export default function PricingPage() {
         ))}
       </div>
 
+      <Card className="mt-6 flex flex-wrap items-center justify-between gap-3 border-accent p-4">
+        <div>
+          <p className="text-[14px] font-semibold">Lieber per WhatsApp bezahlen?</p>
+          <p className="mt-0.5 text-[13px] text-muted">
+            Schreiben Sie uns für den Pro-Zugang direkt auf WhatsApp:{" "}
+            <span className="whitespace-nowrap font-medium">{WHATSAPP_DISPLAY}</span>
+          </p>
+        </div>
+        <a
+          href={whatsappLink(
+            "Hallo, ich möchte den Pro-Zugang für den telc-Simulator kaufen.",
+          )}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center rounded-sm bg-accent px-3 py-1.5 text-[13px] font-medium text-white"
+        >
+          Auf WhatsApp schreiben
+        </a>
+      </Card>
+
       <p className="mt-6 text-[12px] text-muted">
-        Bezahlung per Karte (weltweit, via Stripe) oder Mobile Money in Afrika
-        — u. a. Kamerun MTN/Orange, via Flutterwave. Der Zugang wird nach
-        erfolgreicher Zahlung für 30 Tage freigeschaltet.
+        Bezahlung per Karte (weltweit, via Stripe), Mobile Money in Afrika
+        (u. a. Kamerun MTN/Orange, via Flutterwave) oder per WhatsApp. Der
+        Zugang wird nach erfolgreicher Zahlung für 30 Tage freigeschaltet.
       </p>
     </section>
   );
