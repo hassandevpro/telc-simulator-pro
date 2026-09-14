@@ -308,12 +308,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Vorübergehend nicht verfügbar." }, { status: 503 });
   }
 
+  // ── Liaison transaction ↔ facture ─────────────────────────────────────
+  // Elle ne repose PAS sur un champ unique, car /status n'expose pas toujours
+  // l'identifiant de facture (absent de la forme plate). Trois liens
+  // indépendants la constituent, et le premier est le plus fort :
+  //
+  //   1. la signature HMAC couvre `uuid|invoice_id|status|amount` ENSEMBLE.
+  //      Une signature valide est donc l'attestation, par CamerPay lui-même,
+  //      que cet uuid correspond à NOTRE facture, pour ce montant ;
+  //   2. `providerTxId` a été mémorisé à l'initiation depuis la réponse de
+  //      CamerPay à /initiate pour cette facture précise : il doit valoir le
+  //      même uuid (une divergence a déjà renvoyé 409 plus haut) ;
+  //   3. /status est interrogé PAR cet uuid et doit le confirmer.
+  //
+  // S'y ajoute, quand le champ est présent, la comparaison directe du
+  // `merchant_invoice_id`. L'exiger inconditionnellement reviendrait à
+  // rejeter toute réponse de forme plate — c'était le défaut qui empêchait
+  // l'activation malgré un paiement valide.
+  const uuidLink =
+    transaction.uuid === callback.uuid &&
+    (payment.providerTxId === null || payment.providerTxId === transaction.uuid);
+  const invoiceLink =
+    transaction.invoiceId === null ||
+    transaction.invoiceId === payment.providerRef;
+
   // Le montant attendu vient de NOTRE base (prix serveur), la devise aussi.
   // Un montant supérieur est toléré (le client a payé plus que dû) ; un
   // montant inférieur est un refus net.
   const coherent =
-    transaction.uuid === callback.uuid &&
-    transaction.invoiceId === payment.providerRef &&
+    uuidLink &&
+    invoiceLink &&
     isCamerPayPaid(transaction.status) &&
     transaction.currency === payment.currency &&
     transaction.amount !== null &&
@@ -321,8 +345,10 @@ export async function POST(request: Request) {
 
   if (!coherent) {
     trace("6-coherence", {
-      uuidOk: transaction.uuid === callback.uuid,
-      invoiceOk: transaction.invoiceId === payment.providerRef,
+      uuidOk: uuidLink,
+      // `null` = /status n'expose pas l'identifiant de facture (forme plate) :
+      // le contrôle est alors porté par uuidLink et la signature HMAC.
+      invoiceOk: transaction.invoiceId === null ? null : invoiceLink,
       statutPaye: isCamerPayPaid(transaction.status),
       deviseOk: transaction.currency === payment.currency,
       montantOk: transaction.amount !== null && transaction.amount >= payment.amount,

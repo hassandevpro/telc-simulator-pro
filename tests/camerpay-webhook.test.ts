@@ -93,18 +93,48 @@ mock.module("@/lib/billing", {
 
 let statusHandler: () => Promise<Response>;
 
+/**
+ * Forme IMBRIQUEE, telle que publiee par CamerPay sur la page
+ * « Endpoints detailles » :
+ *   { success, transaction: { uuid, merchant_invoice_id, status, amount, … } }
+ * C'est la seule des deux qui expose l'identifiant de facture.
+ */
 function statusResponse(overrides: Record<string, unknown> = {}): Response {
   return new Response(
     JSON.stringify({
-      data: {
+      success: true,
+      transaction: {
         uuid: UUID,
         merchant_invoice_id: INVOICE,
         status: "completed",
-        amount: "6500",
+        amount: 6500,
         currency: "XAF",
         payment_method: "orange_money",
+        is_sandbox: true,
         ...overrides,
       },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+/**
+ * Forme PLATE, telle que decrite par le schema OpenAPI « StatusResponse » :
+ *   { success, transaction_uuid, status, amount, currency, … }
+ * AUCUN identifiant de facture n'y figure — c'est precisement la forme qui
+ * faisait echouer l'ancien parseur et bloquait l'activation en production.
+ */
+function statusResponseFlat(overrides: Record<string, unknown> = {}): Response {
+  return new Response(
+    JSON.stringify({
+      success: true,
+      transaction_uuid: UUID,
+      status: "completed",
+      // Le schema documente une CHAINE a deux decimales.
+      amount: "6500.00",
+      currency: "XAF",
+      payment_method: "orange_money",
+      ...overrides,
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
@@ -503,4 +533,94 @@ test("AUCUN webhook non authentifie ne peut activer un plan", async () => {
   assert.deepEqual(activations, []);
   assert.equal(credited, 0);
   assert.equal(payment!.status, "PENDING");
+});
+
+/* ============ 7. Forme PLATE de /status (schema OpenAPI reel) ============= */
+/*
+ * Regression du defaut constate en production : l'ancien parseur ne lisait
+ * que `uuid` et exigeait `merchant_invoice_id`. Face a la forme plate, les
+ * deux valaient null, la garde de coherence echouait et un paiement
+ * legitime n'activait rien — sans qu'aucune erreur ne soit levee.
+ */
+
+test("PLATE : transaction_uuid reconnu -> activation", async () => {
+  statusHandler = async () => statusResponseFlat();
+  const response = await webhook(callback());
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { received: true, activated: true });
+  assert.deepEqual(activations, [INVOICE]);
+  assert.equal(credited, 1);
+});
+
+test("PLATE : transaction_uuid DIFFERENT -> aucune activation", async () => {
+  statusHandler = async () =>
+    statusResponseFlat({ transaction_uuid: "00000000-0000-4000-8000-000000000999" });
+  const response = await webhook(callback());
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { received: true, activated: false });
+  assert.equal(credited, 0);
+});
+
+test("PLATE : montant INFERIEUR au du -> aucune activation", async () => {
+  statusHandler = async () => statusResponseFlat({ amount: "100.00" });
+  await webhook(callback());
+  assert.equal(credited, 0);
+});
+
+test("PLATE : devise DIFFERENTE -> aucune activation", async () => {
+  statusHandler = async () => statusResponseFlat({ currency: "EUR" });
+  await webhook(callback());
+  assert.equal(credited, 0);
+});
+
+test("PLATE : statut non paye -> aucune activation", async () => {
+  statusHandler = async () => statusResponseFlat({ status: "processing" });
+  await webhook(callback());
+  assert.equal(credited, 0);
+});
+
+test("PLATE : signature HMAC invalide -> 401, /status jamais interroge", async () => {
+  let called = false;
+  statusHandler = async () => {
+    called = true;
+    return statusResponseFlat();
+  };
+  const response = await webhook(callback({}, { signature: "f".repeat(64) }));
+  assert.equal(response.status, 401);
+  assert.equal(called, false, "la signature doit etre verifiee AVANT tout appel sortant");
+  assert.equal(credited, 0);
+});
+
+test("PLATE : meme webhook recu deux fois -> un seul credit", async () => {
+  statusHandler = async () => statusResponseFlat();
+  const first = await webhook(callback());
+  const second = await webhook(callback());
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.deepEqual(activations, [INVOICE, INVOICE], "les deux livraisons sont traitees");
+  assert.equal(credited, 1, "mais une seule transition PENDING -> SUCCESS credite");
+});
+
+test("PLATE : providerTxId deja connu et identique -> activation", async () => {
+  payment!.providerTxId = UUID;
+  statusHandler = async () => statusResponseFlat();
+  await webhook(callback());
+  assert.equal(credited, 1);
+});
+
+test("success:false -> 503, aucune activation", async () => {
+  statusHandler = async () =>
+    new Response(JSON.stringify({ success: false }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const response = await webhook(callback());
+  assert.equal(response.status, 503);
+  assert.equal(credited, 0);
+});
+
+test("IMBRIQUEE : invoice_id present et coherent -> activation", async () => {
+  statusHandler = async () => statusResponse();
+  await webhook(callback());
+  assert.equal(credited, 1);
 });

@@ -221,19 +221,30 @@ export async function getCamerPayTransaction(
 
   const payload = (await response.json().catch(() => null)) as unknown;
   const record = asRecord(payload);
-  const data = asRecord(record?.data) ?? record;
-  if (!data) return null;
+  if (!record) return null;
 
-  // Noms de champs VOLONTAIREMENT stricts. Cette réponse décide d'une
-  // activation : accepter « n'importe quelle structure » reviendrait à
-  // laisser un corps inattendu satisfaire nos contrôles. On s'en tient donc
-  // à la nomenclature attestée par CamerPay — `uuid`, `invoice_id`, `status`
-  // et `amount` sont les quatre champs de leur formule de signature ;
-  // `merchant_invoice_id`, `currency` et `payment_method` sont les noms de
-  // leur exemple d'initiation officiel. Un champ absent vaut null, et null
-  // n'active jamais rien.
+  // Échec applicatif annoncé explicitement : indécidable, donc rien.
+  if (record.success === false) return null;
+
+  // La documentation CamerPay décrit DEUX formes pour cette réponse :
+  //   - plate      { success, transaction_uuid, status, amount, currency, … }
+  //                (schéma OpenAPI « StatusResponse ») ;
+  //   - imbriquée  { success, transaction: { uuid, status, amount, currency,
+  //                merchant_invoice_id, … } } (page « Endpoints détaillés »).
+  // On accepte les deux plutôt que de parier sur l'une : se tromper de forme
+  // ne produit pas une erreur visible mais des champs à null, donc un refus
+  // d'activer un paiement pourtant légitime — exactement le défaut corrigé ici.
+  const data = asRecord(record.transaction) ?? asRecord(record.data) ?? record;
+
+  // Noms de champs volontairement restreints aux DEUX nomenclatures
+  // attestées ci-dessus. Cette réponse décide d'une activation : accepter
+  // « n'importe quelle structure » laisserait un corps inattendu satisfaire
+  // nos contrôles. Un champ absent vaut null, et null n'active jamais rien.
   return {
-    uuid: readString(data, ["uuid"]),
+    // Forme plate : `transaction_uuid`. Forme imbriquée : `uuid`.
+    uuid: readString(data, ["transaction_uuid", "uuid"]),
+    // Présent uniquement dans la forme imbriquée — d'où le contrôle
+    // conditionnel côté webhook (voir la garde de cohérence).
     invoiceId: readString(data, ["merchant_invoice_id", "invoice_id"]),
     status: normalizeCamerPayStatus(data.status),
     amount: readAmount(data.amount),
