@@ -65,6 +65,9 @@ export function AbgabeView({ sessionId, parts }: AbgabeViewProps) {
       // Persiste D'ABORD les dernières réponses (le store est la source
       // vivante), en attendant l'écriture serveur, PUIS relit l'état complet
       // — sinon la correction porterait sur des réponses périmées.
+      // Ce flush est désormais INDISPENSABLE : la correction ne lit plus que
+      // les réponses persistées en base (le serveur n'accepte plus ni examId
+      // ni réponses venant du client).
       await sessionRepository.saveAnswers(sessionId, answers);
       const state = await sessionRepository.load(sessionId);
       if (!state) throw new Error("Session introuvable.");
@@ -72,7 +75,7 @@ export function AbgabeView({ sessionId, parts }: AbgabeViewProps) {
       const response = await fetch("/api/sessions/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examId: state.examId, answers: state.answers }),
+        body: JSON.stringify({ sessionId }),
       });
       if (!response.ok) throw new Error("La correction a échoué.");
       const score = (await response.json()) as SessionScore;

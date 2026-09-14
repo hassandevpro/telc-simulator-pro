@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { getStructureForLevel } from "@/config/exam-structure";
 import { db } from "@/lib/db";
 import type { ScoringQuestion } from "@/lib/scoring/score-session";
@@ -197,24 +196,14 @@ export async function listAvailableExams(
   return exams;
 }
 
-/**
- * ExamId d'une session, côté serveur. v2 : lecture d'abord de la session
- * persistée en base (source de vérité, valable sur tout appareil) ; repli
- * sur le cookie posé à la création (StartExamCard) puis sur la démo.
+/*
+ * NOTE — resolveSessionExamId a été SUPPRIMÉE (faille F1).
+ * Elle retombait sur le cookie `telc-exam-{sessionId}`, posé par le client :
+ * un compte FREE pouvait donc désigner lui-même l'examen payant à servir.
+ * La résolution de l'examen d'une session vit désormais dans
+ * lib/exam-access.ts (requireSessionExam), qui lit exclusivement la ligne
+ * ExamSession en base ET vérifie le droit d'accès dans la foulée.
  */
-export async function resolveSessionExamId(sessionId: string): Promise<string> {
-  try {
-    const session = await db.examSession.findUnique({
-      where: { id: sessionId },
-      select: { examId: true },
-    });
-    if (session) return session.examId;
-  } catch {
-    // Base indisponible : on retombe sur le cookie.
-  }
-  const jar = await cookies();
-  return jar.get(`telc-exam-${sessionId}`)?.value ?? DEMO_B2_CONTENT.examId;
-}
 
 /* ------------------------------- Correction ------------------------------- */
 

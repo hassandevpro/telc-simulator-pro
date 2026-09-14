@@ -5,23 +5,39 @@ import { Button } from "@/components/ui";
 
 /**
  * Achat du plan Centre en self-service : on choisit un nombre de places
- * (quota d'étudiants) puis on paie par carte (Stripe) ou Mobile Money
- * (Flutterwave). Au succès, l'acheteur devient CENTER_ADMIN (webhook).
+ * (quota d'étudiants) puis on paie par carte (Stripe), Orange Money Cameroun
+ * (CamerPay) ou Mobile Money (Flutterwave). Au succès, l'acheteur devient
+ * CENTER_ADMIN (webhook).
+ *
+ * CamerPay ne passe pas par /api/center/checkout : sa route dédiée couvre
+ * déjà le plan CENTER avec le nombre de places et calcule le montant en FCFA
+ * côté serveur.
  */
+type Provider = "stripe" | "camerpay" | "flutterwave";
+
 export function CenterPurchase() {
   const [seats, setSeats] = useState(10);
-  const [busy, setBusy] = useState<"stripe" | "flutterwave" | null>(null);
+  const [busy, setBusy] = useState<Provider | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const buy = async (provider: "stripe" | "flutterwave") => {
+  const buy = async (provider: Provider) => {
     setBusy(provider);
     setError(null);
     try {
-      const response = await fetch("/api/center/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, seats }),
-      });
+      const response = await fetch(
+        provider === "camerpay"
+          ? "/api/payments/camerpay"
+          : "/api/center/checkout",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            provider === "camerpay"
+              ? { plan: "CENTER", seats }
+              : { provider, seats },
+          ),
+        },
+      );
       if (response.status === 401) {
         window.location.href = "/login?callbackUrl=/pricing";
         return;
@@ -62,6 +78,14 @@ export function CenterPurchase() {
         onClick={() => void buy("stripe")}
       >
         {busy === "stripe" ? "Weiterleitung…" : "Mit Karte zahlen"}
+      </Button>
+      <Button
+        variant="secondary"
+        className="w-full"
+        disabled={busy !== null}
+        onClick={() => void buy("camerpay")}
+      >
+        {busy === "camerpay" ? "Weiterleitung…" : "Orange Money (Kamerun)"}
       </Button>
       <Button
         variant="secondary"

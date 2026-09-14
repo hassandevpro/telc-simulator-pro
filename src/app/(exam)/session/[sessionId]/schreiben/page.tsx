@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { WritingTask } from "@/components/questions";
 import { EXAM_STRUCTURES, getSection } from "@/config/exam-structure";
-import { getPartContent, resolveSessionExamId } from "@/lib/exam-content";
+import { requireSessionExam } from "@/lib/exam-access";
+import { getPartContent } from "@/lib/exam-content";
 
 /**
  * Schreiben — les DEUX Aufgaben visibles sur la même page (spécification
@@ -20,11 +21,13 @@ export default async function SchreibenPage({
   const section = getSection(structure, "schreiben");
   if (!section) notFound();
 
-  const examId = await resolveSessionExamId(sessionId);
+  const access = await requireSessionExam(sessionId);
+  if (!access) notFound();
+
   const parts = await Promise.all(
     section.parts.map(async (part) => ({
       part,
-      content: await getPartContent(examId, "schreiben", part.id),
+      content: await getPartContent(access.examId, "schreiben", part.id),
     })),
   );
 

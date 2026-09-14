@@ -22,11 +22,15 @@ export interface StartExamCardProps {
 }
 
 /**
- * Démarrage d'une nouvelle session (v1 LocalStorage-first) :
- * création de l'état initial (AUDIO_CHECK, sans ancre) avec l'examId
- * choisi, cookie `telc-exam-{sessionId}` pour que les pages SERVEUR
- * résolvent le bon contenu, puis entrée — le bootstrap redirige vers
- * le test casque. v2 : POST /api/sessions.
+ * Démarrage d'une nouvelle session : création de l'état initial
+ * (AUDIO_CHECK, sans ancre) avec l'examId choisi, persistance serveur
+ * (POST /api/sessions), puis entrée — le bootstrap redirige vers le test
+ * casque.
+ *
+ * Le cookie `telc-exam-{sessionId}` a été SUPPRIMÉ (faille F1) : les pages
+ * serveur lisent désormais l'examen de la session en base. Le serveur refuse
+ * la création si le plan ne couvre pas l'examen demandé (403) — on renvoie
+ * alors vers les tarifs.
  */
 export function StartExamCard({
   examId,
@@ -50,8 +54,15 @@ export function StartExamCard({
       examId,
       ownerKey,
     );
-    await sessionRepository.save(state);
-    document.cookie = `telc-exam-${sessionId}=${encodeURIComponent(examId)}; path=/; max-age=${60 * 60 * 24 * 30}`;
+    try {
+      await sessionRepository.save(state);
+    } catch {
+      // Refus serveur (plan insuffisant, ou indisponibilité) : on ne laisse
+      // pas le bouton bloqué en « Wird geöffnet… ».
+      setStarting(false);
+      router.push("/pricing");
+      return;
+    }
     router.push(`/session/${sessionId}/lesen/teil-1`);
   };
 

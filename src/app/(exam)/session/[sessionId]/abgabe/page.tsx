@@ -1,10 +1,13 @@
+import { notFound } from "next/navigation";
 import { AbgabeView, type AbgabePartMeta } from "@/components/exam/AbgabeView";
 import { EXAM_STRUCTURES } from "@/config/exam-structure";
-import { getExamContent, resolveSessionExamId } from "@/lib/exam-content";
+import { requireSessionExam } from "@/lib/exam-access";
+import { getExamContent } from "@/lib/exam-content";
 
 /**
  * Remise finale — la page serveur assemble les métadonnées (identifiants
  * de questions par Teil, SANS clés de correction) et délègue au client.
+ * L'accès est vérifié côté serveur (session possédée + droit sur l'examen).
  */
 export default async function AbgabePage({
   params,
@@ -13,7 +16,11 @@ export default async function AbgabePage({
 }) {
   const { sessionId } = await params;
   const structure = EXAM_STRUCTURES.B2;
-  const bundle = await getExamContent(await resolveSessionExamId(sessionId));
+
+  const access = await requireSessionExam(sessionId);
+  if (!access) notFound();
+
+  const bundle = await getExamContent(access.examId);
 
   const parts: AbgabePartMeta[] = [];
   for (const section of structure.schriftlichePruefung.sections) {

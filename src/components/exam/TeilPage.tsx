@@ -7,7 +7,8 @@ import {
   getPart,
   getSection,
 } from "@/config/exam-structure";
-import { getPartContent, resolveSessionExamId } from "@/lib/exam-content";
+import { requireSessionExam } from "@/lib/exam-access";
+import { getPartContent } from "@/lib/exam-content";
 import type { SectionId } from "@/types/exam";
 
 export interface TeilPageProps {
@@ -21,8 +22,10 @@ export interface TeilPageProps {
  * Sprachbausteine et (Sprint 5, avec l'AudioPlayer en plus) Hören :
  * résout le Teil dans la structure officielle, charge le contenu
  * (sans clés de correction) et délègue au QuestionRenderer.
- * Sprint 9 : l'examId sera résolu depuis la session en base au lieu
- * de l'examen de démonstration.
+ *
+ * L'examen servi est celui de la session EN BASE, et l'accès est vérifié
+ * côté serveur avant tout chargement de contenu (requireSessionExam) :
+ * ni le cookie ni un paramètre client ne peuvent désigner l'examen.
  */
 export async function TeilPage({ sessionId, sectionId, teil }: TeilPageProps) {
   const structure = EXAM_STRUCTURES.B2;
@@ -31,8 +34,10 @@ export async function TeilPage({ sessionId, sectionId, teil }: TeilPageProps) {
   const part = getPart(structure, sectionId, teil);
   if (!section || !part) notFound();
 
-  const examId = await resolveSessionExamId(sessionId);
-  const content = await getPartContent(examId, sectionId, teil);
+  const access = await requireSessionExam(sessionId);
+  if (!access) notFound();
+
+  const content = await getPartContent(access.examId, sectionId, teil);
   if (!content || content.type !== part.questionType) notFound();
 
   const startNumber = getItemStartNumber(structure, sectionId, teil);

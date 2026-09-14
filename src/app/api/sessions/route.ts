@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { hasExamAccess } from "@/lib/exam-access";
 import { resolveDbExamId } from "@/lib/exam-content";
 import { buildSessionState } from "@/lib/session-server";
 import { Prisma } from "@/generated/prisma/client";
@@ -88,6 +89,22 @@ export async function POST(request: Request) {
   });
   if (existing && existing.userId !== userId) {
     return NextResponse.json({ error: "Zugriff verweigert." }, { status: 403 });
+  }
+
+  // ── Gating payant (F1) ──
+  // Vérifié à la CRÉATION uniquement : c'est le moment où le candidat choisit
+  // l'examen, et le seul où le client peut proposer un examId. Une session
+  // déjà ouverte n'est jamais recontrôlée ici — un abonnement qui expire en
+  // plein passage ne doit pas faire échouer les autosaves et perdre la copie
+  // (le droit se vérifie à l'entrée, pas pendant : cf. lib/exam-access.ts).
+  if (!existing && !(await hasExamAccess(userId, examId))) {
+    return NextResponse.json(
+      {
+        error: "Für diesen Modelltest ist ein kostenpflichtiger Plan nötig.",
+        code: "PLAN_REQUIRED",
+      },
+      { status: 403 },
+    );
   }
 
   const incomingStarted =

@@ -105,9 +105,10 @@ export default async function PricingPage({
       </Card>
 
       <p className="mt-6 text-[12px] text-muted">
-        Bezahlung per Karte (weltweit, via Stripe), Mobile Money in Afrika
-        (u. a. Kamerun MTN/Orange, via Flutterwave) oder per WhatsApp. Der
-        Zugang wird nach erfolgreicher Zahlung für 30 Tage freigeschaltet.
+        Bezahlung per Karte (weltweit, via Stripe), per Orange Money in
+        Kamerun (in FCFA, via CamerPay), per Mobile Money im übrigen Afrika
+        (via Flutterwave) oder per WhatsApp. Der Zugang wird nach
+        erfolgreicher Zahlung für 30 Tage freigeschaltet.
       </p>
     </section>
   );
