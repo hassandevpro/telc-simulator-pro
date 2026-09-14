@@ -1,5 +1,16 @@
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
+import { LESSONS, TRACKS } from "@/content/vorbereitung";
+
+/**
+ * Chiffres de la Vorbereitung dérivés du catalogue : la landing ne peut pas
+ * annoncer un nombre de leçons que le contenu ne tient pas.
+ */
+const LESSON_COUNT = LESSONS.length;
+const EXERCISE_COUNT = LESSONS.reduce(
+  (total, lesson) => total + lesson.exercises.length,
+  0,
+);
 
 const FEATURES = [
   {
@@ -47,15 +58,18 @@ export default function LandingPage() {
         </h1>
         <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-muted">
           TELC Simulator Pro reproduziert die digitale telc-Prüfungsumgebung:
-          derselbe Ablauf, dieselbe Navigation, derselbe Zeitdruck. Kein
-          Sprachkurs — eine Prüfung.
+          derselbe Ablauf, dieselbe Navigation, derselbe Zeitdruck. Davor:
+          eine freie Vorbereitung mit Grammatik, Redemitteln und Übungen.
         </p>
-        <div className="mt-6 flex gap-2">
+        <div className="mt-6 flex flex-wrap gap-2">
           <Link href="/register">
             <Button variant="primary">Kostenlos testen</Button>
           </Link>
+          <Link href="/vorbereitung">
+            <Button variant="secondary">Vorbereitung ansehen</Button>
+          </Link>
           <Link href="/pricing">
-            <Button variant="secondary">Preise</Button>
+            <Button variant="ghost">Preise</Button>
           </Link>
         </div>
       </section>
@@ -72,6 +86,38 @@ export default function LandingPage() {
                 {feature.text}
               </p>
             </Card>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">
+            Vorbereitung — frei zugänglich
+          </h2>
+          <span className="text-[12px] text-muted">
+            {LESSON_COUNT} Lektionen · {EXERCISE_COUNT} Übungen · ohne Konto
+          </span>
+        </div>
+        <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-muted">
+          Vor dem ersten Modelltest: das Format jedes Prüfungsteils, die
+          Grammatik von B1 bis B2 und fertige Redemittel für den
+          schriftlichen Ausdruck — mit Übungen, die sofort korrigiert werden.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          {TRACKS.map((track) => (
+            <Link key={track.id} href="/vorbereitung" className="block">
+              <Card className="h-full p-4 transition-colors duration-100 hover:bg-surface">
+                <h3 className="text-[14px] font-semibold">{track.label}</h3>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
+                  {track.description}
+                </p>
+                <p className="mt-2.5 text-[12px] text-muted">
+                  {LESSONS.filter((lesson) => lesson.track === track.id).length}{" "}
+                  Lektionen
+                </p>
+              </Card>
+            </Link>
           ))}
         </div>
       </section>

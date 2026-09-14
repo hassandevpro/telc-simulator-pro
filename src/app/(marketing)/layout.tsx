@@ -19,6 +19,9 @@ export default async function MarketingLayout({
             TELC SIMULATOR PRO
           </Link>
           <nav className="flex items-center gap-4 text-[13px] text-muted">
+            <Link href="/vorbereitung" className="hover:text-foreground">
+              Vorbereitung
+            </Link>
             <Link href="/pricing" className="hover:text-foreground">
               Preise
             </Link>

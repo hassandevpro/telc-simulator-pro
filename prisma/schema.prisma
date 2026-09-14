@@ -48,16 +48,16 @@ enum SessionStatus {
 }
 
 model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
+  id            String        @id @default(cuid())
+  email         String        @unique
   // Null pour les comptes créés via Google (OAuth) : pas de mot de passe local.
-  passwordHash String?
-  name         String
+  passwordHash  String?
+  name          String
   // Numéro de téléphone (WhatsApp) saisi à l'inscription — sert au paiement
   // et au contact. Null pour les comptes Google tant qu'il n'est pas renseigné.
-  phone        String?
-  role         Role          @default(STUDENT)
-  plan         Plan          @default(FREE)
+  phone         String?
+  role          Role          @default(STUDENT)
+  plan          Plan          @default(FREE)
   // Date de vérification de l'e-mail — null tant que non vérifié (la
   // connexion est refusée dans ce cas).
   emailVerified DateTime?
@@ -66,16 +66,18 @@ model User {
   // Crédits de passage d'examen (anti-partage). 1 crédit = 1 examen, débité
   // au démarrage du chrono. Rechargés à chaque paiement (config/credits.ts).
   // Pour un étudiant de centre, le pool consommé est celui du propriétaire.
-  credits      Int           @default(2)
+  credits       Int           @default(2)
   // Rattachement à un centre de langue en tant qu'ÉTUDIANT membre.
-  centerId     String?
-  center       Center?       @relation("CenterMembers", fields: [centerId], references: [id])
+  centerId      String?
+  center        Center?       @relation("CenterMembers", fields: [centerId], references: [id])
   // Centre géré par cet utilisateur (rôle CENTER_ADMIN) — au plus un.
-  ownedCenter  Center?       @relation("CenterOwner")
-  sessions     ExamSession[]
-  payments     Payment[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  ownedCenter   Center?       @relation("CenterOwner")
+  sessions      ExamSession[]
+  payments      Payment[]
+  // Progression dans la Vorbereitung (contenu statique, progression en base).
+  lessonProgress LessonProgress[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@index([centerId])
 }
@@ -98,7 +100,9 @@ model Center {
   createdAt  DateTime @default(now())
 }
 
-/** Jeton de vérification d'e-mail (haché) — usage unique, borné dans le temps. */
+/**
+ * Jeton de vérification d'e-mail (haché) — usage unique, borné dans le temps.
+ */
 model VerificationToken {
   id        String   @id @default(cuid())
   email     String
@@ -112,6 +116,7 @@ model VerificationToken {
 enum PaymentProvider {
   FLUTTERWAVE
   STRIPE
+  CAMERPAY
 }
 
 enum PaymentStatus {
@@ -120,22 +125,30 @@ enum PaymentStatus {
   FAILED
 }
 
-/** Trace d'un paiement (init → webhook). L'activation du plan est idempotente. */
+/**
+ * Trace d'un paiement (init → webhook). L'activation du plan est idempotente.
+ */
 model Payment {
-  id          String          @id @default(cuid())
-  userId      String
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider    PaymentProvider
-  // tx_ref (Flutterwave) ou id de session Checkout (Stripe).
-  providerRef String          @unique
-  plan        Plan
-  amount      Float
-  currency    String
+  id           String          @id @default(cuid())
+  userId       String
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     PaymentProvider
+  // NOTRE référence, émise à l'initiation : tx_ref (Flutterwave), id de
+  // session Checkout (Stripe), merchant_invoice_id (CamerPay). C'est LA clé
+  // d'idempotence métier — celle que consomme activatePlanByRef.
+  providerRef  String          @unique
+  // Identifiant émis par le PRESTATAIRE, connu seulement après coup (webhook).
+  // Sert à re-interroger CamerPay : GET /api/payment/{uuid}/status. Reste null
+  // pour Stripe et Flutterwave, dont la vérification serveur passe ailleurs.
+  providerTxId String?         @unique
+  plan         Plan
+  amount       Float
+  currency     String
   // Places achetées (paiement CENTER par quota) — null pour Student/Premium.
-  seats       Int?
-  status      PaymentStatus   @default(PENDING)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  seats        Int?
+  status       PaymentStatus   @default(PENDING)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   @@index([userId])
 }
@@ -152,55 +165,66 @@ model Exam {
 }
 
 model ExamPart {
-  id        String     @id @default(cuid())
-  examId    String
-  exam      Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  id            String     @id @default(cuid())
+  examId        String
+  exam          Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
   // Références vers la structure officielle (config/exam-structure.ts).
-  sectionId String // "lesen" | "hoeren" | "sprachbausteine" | "schreiben"
-  partId    String // "teil-1" | "teil-2" | "teil-3" | "aufgabe-a" | "aufgabe-b"
+  sectionId     String // "lesen" | "hoeren" | "sprachbausteine" | "schreiben"
+  partId        String // "teil-1" | "teil-2" | "teil-3" | "aufgabe-a" | "aufgabe-b"
   // Contenu partagé du Teil : texte(s) source, banque des 10 titres,
   // annonces A–L, texte à trous… Forme validée par Zod selon le type
   // (src/types/question-content.ts).
   sharedContent Json?
   // Hören uniquement.
-  audioUrl  String?
-  questions Question[]
+  audioUrl      String?
+  questions     Question[]
 
   @@unique([examId, sectionId, partId])
+  // Index présent en base. Redondant avec le @@unique ci-dessus (examId en
+  // tête) — déclaré ici pour que le schéma décrive la base réelle.
+  @@index([examId])
 }
 
 model Question {
-  id       String       @id @default(cuid())
-  partId   String
-  part     ExamPart     @relation(fields: [partId], references: [id], onDelete: Cascade)
-  position Int
-  type     QuestionType
+  id        String       @id @default(cuid())
+  partId    String
+  part      ExamPart     @relation(fields: [partId], references: [id], onDelete: Cascade)
+  position  Int
+  type      QuestionType
   // Structure validée par Zod selon `type` (src/types/question-content.ts).
-  content  Json
+  content   Json
   // Correction automatique — null pour WRITING (correction manuelle v1).
   answerKey Json?
-  points   Float
-  answers  Answer[]
+  points    Float
+  answers   Answer[]
 
   @@unique([partId, position])
+  // Index présent en base. Redondant avec le @@unique ci-dessus (partId en
+  // tête) — déclaré ici pour que le schéma décrive la base réelle.
+  @@index([partId])
 }
 
 model ExamSession {
-  id     String        @id @default(cuid())
-  userId String
-  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  examId String
-  exam   Exam          @relation(fields: [examId], references: [id])
-  status SessionStatus @default(AUDIO_CHECK)
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId      String
+  exam        Exam          @relation(fields: [examId], references: [id])
+  status      SessionStatus @default(AUDIO_CHECK)
   // Ancre du timer — posée une seule fois, JAMAIS modifiée ensuite.
   // Fondement du timer inviolable (ARCHITECTURE.md §6).
   startedAt   DateTime?
   submittedAt DateTime?
   // Ids des audios déjà consommés (marqués dès `play`).
-  audioPlayed Json      @default("[]")
+  audioPlayed Json          @default("[]")
   answers     Answer[]
   result      Result?
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime      @default(now())
+
+  // Index présents en base et réellement utiles : aucune contrainte ne
+  // couvre ces colonnes (sessions par candidat, sessions par examen).
+  @@index([userId])
+  @@index([examId])
 }
 
 model Answer {
@@ -210,22 +234,53 @@ model Answer {
   questionId String
   question   Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
   // string (choix / texte libre) ou null — voir types/session.ts.
-  value     Json
-  updatedAt DateTime @updatedAt
+  value      Json
+  updatedAt  DateTime    @updatedAt
 
   // L'autosave est un simple upsert idempotent.
   @@unique([sessionId, questionId])
+  // Index présent en base. Redondant avec le @@unique ci-dessus (sessionId
+  // en tête) — déclaré ici pour que le schéma décrive la base réelle.
+  @@index([sessionId])
 }
 
 model Result {
-  id          String      @id @default(cuid())
-  sessionId   String      @unique
-  session     ExamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  totalPoints Float
-  maxPoints   Float
+  id            String      @id @default(cuid())
+  sessionId     String      @unique
+  session       ExamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  totalPoints   Float
+  maxPoints     Float
   // Détail par section/Teil (calculé par lib/scoring, Sprint 8).
   sectionScores Json
   // null tant que le Schreiben n'est pas corrigé (correction manuelle v1).
-  passed    Boolean?
-  createdAt DateTime @default(now())
+  passed        Boolean?
+  createdAt     DateTime    @default(now())
+}
+
+/**
+ * Progression dans la Vorbereitung (espace d'apprentissage).
+ *
+ * Le CONTENU des leçons est statique (src/content/vorbereitung) — la base ne
+ * stocke que ce qui est propre à l'utilisateur. `lessonSlug` est donc une
+ * simple chaîne, sans clé étrangère : le catalogue n'est pas en base.
+ * Une leçon peut être lue sans compte ; dans ce cas rien n'est écrit ici
+ * (repli LocalStorage côté client).
+ */
+model LessonProgress {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Slug de la leçon dans src/content/vorbereitung — stable par contrat.
+  lessonSlug  String
+  // Marquée comme lue par l'utilisateur.
+  completed   Boolean  @default(false)
+  // Dernier résultat d'exercice : items corrects / items corrigibles.
+  score       Int?
+  maxScore    Int?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  // Une seule ligne par (utilisateur, leçon) : l'enregistrement est un upsert.
+  @@unique([userId, lessonSlug])
+  @@index([userId])
 }
