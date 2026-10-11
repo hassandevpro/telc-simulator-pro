@@ -35,3 +35,23 @@ export interface SessionRepository {
 
   clear(sessionId: string): Promise<void>;
 }
+
+/**
+ * Erreur d'écriture d'une session. `retryable` distingue une panne
+ * passagère (réseau, 5xx : réessayer) d'un refus définitif du serveur
+ * (épreuve close ou expirée : réessayer ne servirait à rien).
+ */
+export class SessionWriteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+  ) {
+    super(message);
+    this.name = "SessionWriteError";
+  }
+
+  get retryable(): boolean {
+    return this.status === 0 || this.status >= 500 || this.status === 429;
+  }
+}

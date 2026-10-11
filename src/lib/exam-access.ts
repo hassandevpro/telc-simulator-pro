@@ -1,10 +1,13 @@
 import "server-only";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEffectivePlanForUser } from "@/lib/billing";
 import { planIncludesFullCatalog } from "@/config/plans";
 import { DEMO_B2_CONTENT } from "@/lib/demo-b2-content";
 import { DEMO_IMPORT_TITLE } from "@/lib/exam-content";
+import { sessionDurationSeconds } from "@/lib/session-server";
+import type { Level } from "@/types/exam";
 
 /**
  * GARDE D'ACCÈS AUX EXAMENS — autorité unique et exclusivement serveur.
@@ -62,38 +65,74 @@ export interface SessionExamAccess {
   examId: string;
 }
 
+/** Résultat de la garde : accès, épreuve pas encore démarrée, ou refus. */
+export type SessionExamGuard =
+  | ({ kind: "ok" } & SessionExamAccess)
+  | { kind: "not-started" }
+  | null;
+
 /**
- * Garde des pages et Route Handlers d'examen : résout l'examen d'une session
- * ET vérifie le droit d'y accéder, en une seule opération.
+ * Garde des pages d'examen : résout l'examen d'une session ET vérifie le
+ * droit d'y accéder, en une seule opération.
  *
  * Renvoie null (l'appelant répond 404 / notFound, sans révéler l'existence
- * de la session) si l'une de ces conditions n'est pas remplie :
- *  - utilisateur authentifié ;
- *  - session existante APPARTENANT à cet utilisateur ;
- *  - droit d'accès à l'examen associé à cette session.
+ * de la session) si :
+ *  - l'utilisateur n'est pas authentifié ;
+ *  - la session n'existe pas ou ne lui APPARTIENT pas ;
+ *  - il n'a pas (ou plus) le droit d'accéder à l'examen.
  *
- * EXCEPTION VOLONTAIRE — épreuve en cours : si le chrono est lancé et la
- * session encore ouverte, l'accès est maintenu même sans droit courant. Le
- * droit se vérifie à l'ENTRÉE, jamais pendant : une expiration d'abonnement
- * au milieu d'un passage ne doit pas faire perdre sa copie au candidat
- * (l'entrée, elle, est verrouillée par POST /api/sessions).
+ * Renvoie `not-started` tant que l'épreuve n'a pas démarré : le CONTENU d'un
+ * examen n'est servi qu'après le démarrage, c'est-à-dire après le débit du
+ * crédit (sinon une session créée puis jamais démarrée donnerait à lire tout
+ * l'examen gratuitement).
+ *
+ * EXCEPTION VOLONTAIRE — épreuve en cours : tant que l'échéance SERVEUR
+ * n'est pas passée, l'accès est maintenu même sans droit courant (une
+ * expiration d'abonnement en plein passage ne fait pas perdre la copie).
  */
-export async function requireSessionExam(
+export async function requireSessionExamAccess(
   sessionId: string,
-): Promise<SessionExamAccess | null> {
+): Promise<SessionExamGuard> {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return null;
 
   const row = await db.examSession.findUnique({
     where: { id: sessionId },
-    select: { userId: true, examId: true, startedAt: true, status: true },
+    select: {
+      userId: true,
+      examId: true,
+      startedAt: true,
+      status: true,
+      exam: { select: { level: true } },
+    },
   });
   if (!row || row.userId !== userId) return null;
+  if (row.startedAt === null || row.status === "AUDIO_CHECK") {
+    return { kind: "not-started" };
+  }
 
-  const inFlight = row.startedAt !== null && row.status === "IN_PROGRESS";
-  if (inFlight) return { userId, examId: row.examId };
+  const durationMs = sessionDurationSeconds(row.exam.level as Level) * 1000;
+  const inFlight =
+    row.status === "IN_PROGRESS" &&
+    Date.now() <= row.startedAt.getTime() + durationMs;
+  if (inFlight) return { kind: "ok", userId, examId: row.examId };
 
   if (!(await hasExamAccess(userId, row.examId))) return null;
-  return { userId, examId: row.examId };
+  return { kind: "ok", userId, examId: row.examId };
+}
+
+/**
+ * Variante des pages : renvoie l'accès, redirige vers le test casque si
+ * l'épreuve n'a pas démarré, null sinon (→ notFound).
+ */
+export async function requireSessionExam(
+  sessionId: string,
+): Promise<SessionExamAccess | null> {
+  const guard = await requireSessionExamAccess(sessionId);
+  if (guard?.kind === "not-started") {
+    redirect(`/audio-check?session=${encodeURIComponent(sessionId)}`);
+  }
+  if (!guard) return null;
+  return { userId: guard.userId, examId: guard.examId };
 }

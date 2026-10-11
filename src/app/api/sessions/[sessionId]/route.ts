@@ -3,6 +3,13 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildSessionState } from "@/lib/session-server";
+import {
+  expireIfOverdue,
+  expireSession,
+  saveSessionAnswers,
+  startSession,
+  type LifecycleError,
+} from "@/lib/session-lifecycle";
 import { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -50,20 +57,30 @@ export async function GET(
   if (!row) {
     return NextResponse.json({ error: "Nicht gefunden." }, { status: 404 });
   }
+  // Le temps fait autorité côté SERVEUR : une session dont l'échéance est
+  // passée est fermée ici, quoi que le navigateur affiche.
+  row.status = (await expireIfOverdue(row)) as typeof row.status;
   return NextResponse.json(buildSessionState(row));
 }
 
 const patchSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("answers"),
-    answers: z.record(z.string(), z.string().nullable()),
+    answers: z.record(z.string(), z.string().max(20_000).nullable()),
   }),
   z.object({
     op: z.literal("status"),
     status: z.enum(["IN_PROGRESS", "SUBMITTED", "EXPIRED", "SCORED"]),
   }),
-  z.object({ op: z.literal("audio"), audioId: z.string().min(1) }),
+  z.object({ op: z.literal("audio"), audioId: z.string().min(1).max(200) }),
 ]);
+
+function lifecycleError(result: LifecycleError) {
+  return NextResponse.json(
+    { error: result.error, code: result.code },
+    { status: result.status },
+  );
+}
 
 export async function PATCH(
   request: Request,
@@ -80,36 +97,39 @@ export async function PATCH(
   const body = parsed.data;
 
   if (body.op === "answers") {
-    for (const [questionId, value] of Object.entries(body.answers)) {
-      if (value === null) {
-        await db.answer
-          .delete({ where: { sessionId_questionId: { sessionId, questionId } } })
-          .catch(() => undefined);
-        continue;
-      }
-      const jsonValue = value as Prisma.InputJsonValue;
-      await db.answer
-        .upsert({
-          where: { sessionId_questionId: { sessionId, questionId } },
-          create: { sessionId, questionId, value: jsonValue },
-          update: { value: jsonValue },
-        })
-        .catch(() => undefined);
+    try {
+      const saved = await saveSessionAnswers(sessionId, guard.userId, body.answers);
+      if (!saved.ok) return lifecycleError(saved);
+      return NextResponse.json(saved);
+    } catch (cause) {
+      // Échec d'écriture : RIEN n'est conservé (transaction) et le client
+      // le sait — il garde ses réponses en attente et réessaie.
+      console.error("[sessions/answers] écriture échouée", cause);
+      return NextResponse.json(
+        { error: "Speichern fehlgeschlagen.", code: "SAVE_FAILED" },
+        { status: 503 },
+      );
     }
-    return NextResponse.json({ ok: true });
   }
 
   if (body.op === "status") {
-    // La clôture (SUBMITTED/EXPIRED) pose submittedAt une seule fois.
-    const closing = body.status === "SUBMITTED" || body.status === "EXPIRED";
-    await db.examSession.update({
-      where: { id: sessionId },
-      data: {
-        status: body.status,
-        ...(closing ? { submittedAt: new Date() } : {}),
+    // Seules transitions demandables : démarrer, fermer. La remise passe par
+    // POST /api/sessions/{id}/submit ; aucun retour en arrière.
+    if (body.status === "IN_PROGRESS") {
+      const started = await startSession(sessionId, guard.userId);
+      return started.ok ? NextResponse.json({ ok: true }) : lifecycleError(started);
+    }
+    if (body.status === "EXPIRED") {
+      const expired = await expireSession(sessionId, guard.userId);
+      return expired.ok ? NextResponse.json({ ok: true }) : lifecycleError(expired);
+    }
+    return NextResponse.json(
+      {
+        error: "Abgabe nur über die Abgabe-Funktion möglich.",
+        code: "INVALID_TRANSITION",
       },
-    });
-    return NextResponse.json({ ok: true });
+      { status: 409 },
+    );
   }
 
   // op === "audio" : ajoute l'id à la liste des audios consommés (idempotent).

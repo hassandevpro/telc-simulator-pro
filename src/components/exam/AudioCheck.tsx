@@ -34,6 +34,7 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
   const [hasPlayedSample, setHasPlayedSample] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const setStatus = useExamSessionStore((state) => state.setStatus);
   const initializeTimer = useTimerStore((state) => state.initialize);
@@ -75,7 +76,21 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
         // L'ancre n'est posée que si elle n'existe pas encore.
         startedAt: state.startedAt ?? Date.now(),
       };
-      await sessionRepository.save(state);
+      try {
+        await sessionRepository.save(state);
+      } catch (cause) {
+        // Refus serveur (plus de crédit, plan expiré…) : on l'affiche au lieu
+        // de laisser le bouton bloqué.
+        setStarting(false);
+        setStartError(
+          cause instanceof Error
+            ? cause.message
+            : "Die Prüfung konnte nicht gestartet werden.",
+        );
+        return;
+      }
+      // Le serveur pose l'ancre (heure serveur) : on la relit.
+      state = (await sessionRepository.load(sessionId)) ?? state;
     }
 
     setStatus(state.status);
@@ -144,6 +159,15 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
           </label>
         </div>
       </Card>
+
+      {startError ? (
+        <p className="mt-3 text-[13px] text-danger">
+          {startError}{" "}
+          <a href="/dashboard" className="underline underline-offset-2">
+            Zur Übersicht
+          </a>
+        </p>
+      ) : null}
 
       <div className="mt-5 flex justify-end">
         <Button
