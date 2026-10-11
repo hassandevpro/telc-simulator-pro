@@ -14,6 +14,8 @@ interface CenterData {
   name: string;
   inviteCode: string;
   seats: number;
+  /** Fin de validité des sièges actifs (ms epoch), null sans siège actif. */
+  seatsValidUntil: number | null;
   memberCount: number;
 }
 
@@ -155,6 +157,9 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
             {center.memberCount} / {center.seats} Plätze belegt
             {" · "}
             {seatsFree} frei
+            {center.seatsValidUntil
+              ? ` · gültig bis ${new Date(center.seatsValidUntil).toLocaleDateString("de-DE")}`
+              : " · keine aktiven Plätze"}
           </span>
         </div>
 

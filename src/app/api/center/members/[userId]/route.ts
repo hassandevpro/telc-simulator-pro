@@ -24,7 +24,7 @@ export async function DELETE(
   // On ne détache QUE des membres de SON centre.
   const result = await db.user.updateMany({
     where: { id: userId, centerId: center.id },
-    data: { centerId: null },
+    data: { centerId: null, centerJoinedAt: null },
   });
   if (result.count === 0) {
     return NextResponse.json({ error: "Kein Mitglied." }, { status: 404 });

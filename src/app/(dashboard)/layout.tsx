@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
+import { creditBalanceFor } from "@/lib/center-seats";
 import { db } from "@/lib/db";
 import { getCurrentUserPlan } from "@/lib/billing";
 import { AccountMenu } from "@/components/account";
 
 /**
  * Layout de l'espace candidat connecté (dashboard, résultats).
- * Les routes du groupe sont protégées par le middleware ; le layout
+ * Les routes du groupe sont protégées par le proxy (src/proxy.ts) ; le layout
  * affiche la navigation et la déconnexion.
  */
 export default async function DashboardLayout({
@@ -32,18 +33,7 @@ export default async function DashboardLayout({
   const plan = await getCurrentUserPlan();
   let credits = 0;
   if (userId) {
-    const me = await db.user
-      .findUnique({
-        where: { id: userId },
-        select: {
-          credits: true,
-          centerId: true,
-          center: { select: { owner: { select: { credits: true } } } },
-        },
-      })
-      .catch(() => null);
-    credits =
-      me?.centerId && me.center?.owner ? me.center.owner.credits : (me?.credits ?? 0);
+    credits = await creditBalanceFor(db, userId).catch(() => 0);
   }
 
   return (

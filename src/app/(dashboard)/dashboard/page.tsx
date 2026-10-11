@@ -3,6 +3,7 @@ import { StartExamCard } from "@/components/exam/StartExamCard";
 import { SessionList } from "@/components/results";
 import { getCurrentUserPlan } from "@/lib/billing";
 import { listAvailableExams, resolveDbExamId } from "@/lib/exam-content";
+import { creditBalanceFor } from "@/lib/center-seats";
 import { db } from "@/lib/db";
 
 /**
@@ -29,16 +30,11 @@ export default async function DashboardPage({
   if (ownerKey) {
     const me = await db.user.findUnique({
       where: { id: ownerKey },
-      select: {
-        credits: true,
-        role: true,
-        centerId: true,
-        center: { select: { owner: { select: { credits: true } } } },
-      },
+      select: { role: true },
     });
     isSuperAdmin = me?.role === "SUPER_ADMIN";
-    credits =
-      me?.centerId && me.center?.owner ? me.center.owner.credits : (me?.credits ?? 0);
+    // Même règle que le débit : pool du centre seulement avec un siège actif.
+    credits = await creditBalanceFor(db, ownerKey);
     const doneSessions = await db.examSession.findMany({
       where: { userId: ownerKey, status: { in: ["SUBMITTED", "SCORED"] } },
       select: { examId: true },

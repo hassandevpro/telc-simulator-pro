@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
 import { CENTER_CREDITS_PER_SEAT, creditsForPlan } from "@/config/credits";
+import { SEAT_PERIOD_DAYS, memberHasActiveSeat } from "@/lib/center-seats";
+import type { Prisma } from "@/generated/prisma/client";
 
 /**
  * Activation de plan et lecture du plan effectif.
@@ -52,69 +54,130 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
       if (!payment) return false; // référence inconnue
       if (claimed.count === 0) return true; // déjà traité — aucun effet
 
-      const days = getPlanPrice(payment.plan)?.durationDays ?? 30;
+      const now = Date.now();
       const user = await tx.user.findUnique({
         where: { id: payment.userId },
-        select: { planExpiresAt: true },
+        select: { plan: true, planExpiresAt: true, role: true },
       });
-      const base =
-        user?.planExpiresAt && user.planExpiresAt.getTime() > Date.now()
-          ? user.planExpiresAt.getTime()
-          : Date.now();
-      const planExpiresAt = new Date(base + days * DAY_MS);
+      const current = {
+        plan: (user?.plan ?? "FREE") as string,
+        expiresAt: user?.planExpiresAt?.getTime() ?? null,
+      };
+      const currentActive =
+        current.plan !== "FREE" && current.expiresAt !== null && current.expiresAt > now;
+
+      if (payment.plan === "CENTER") {
+        await grantCenterSeats(tx, payment, now);
+        const seats = payment.seats ?? 0;
+        const seatsUntil = now + SEAT_PERIOD_DAYS * DAY_MS;
+        // Plan PERSONNEL du propriétaire : un Student/Premium encore actif est
+        // conservé tel quel (les sièges ont leur propre validité). Sinon il
+        // devient CENTER jusqu'à la fin des sièges achetés — sans cumul de
+        // durée : un renouvellement ne prolonge que ce qu'il paie.
+        const keepPersonal = currentActive && current.plan !== "CENTER";
+        await tx.user.update({
+          where: { id: payment.userId },
+          data: {
+            ...(keepPersonal
+              ? {}
+              : {
+                  plan: "CENTER" as const,
+                  planExpiresAt: new Date(
+                    Math.max(seatsUntil, currentActive ? current.expiresAt! : 0),
+                  ),
+                }),
+            // Un SUPER_ADMIN qui achète des sièges reste SUPER_ADMIN.
+            ...(user?.role === "SUPER_ADMIN" ? {} : { role: "CENTER_ADMIN" as const }),
+            credits: { increment: seats * CENTER_CREDITS_PER_SEAT },
+          },
+        });
+        return true;
+      }
+
+      const days = getPlanPrice(payment.plan)?.durationDays ?? 30;
+      const base = currentActive ? current.expiresAt! : now;
+      const currentRank = PLAN_RANK[current.plan] ?? 0;
+      const boughtRank = PLAN_RANK[payment.plan] ?? 0;
+
+      let plan = payment.plan;
+      let addedDays = days;
+      if (currentActive && currentRank > boughtRank) {
+        // Achat INFÉRIEUR pendant un abonnement supérieur actif : le plan
+        // supérieur est CONSERVÉ (jamais de rétrogradation), et la valeur
+        // payée est convertie en jours du plan supérieur, au prorata des prix
+        // (ex. 30 j Student = 15 j Premium). Aucun paiement n'est perdu.
+        plan = current.plan as typeof payment.plan;
+        addedDays = proratedDays(payment.plan, current.plan, days);
+      }
 
       await tx.user.update({
         where: { id: payment.userId },
         data: {
-          plan: payment.plan,
-          planExpiresAt,
-          // Dotation de crédits ajoutée au solde (0 pour CENTER, crédité au
-          // siège ci-dessous). Consommés ensuite examen par examen.
+          plan,
+          planExpiresAt: new Date(base + addedDays * DAY_MS),
+          // Dotation de crédits ajoutée au solde, consommée examen par examen.
           credits: { increment: creditsForPlan(payment.plan) },
         },
       });
-
-      // Achat CENTER par quota (self-service) : promeut l'acheteur en
-      // CENTER_ADMIN, crée son centre s'il n'existe pas, et AJOUTE les sièges
-      // achetés au quota existant (additif).
-      if (payment.plan === "CENTER") {
-        const addSeats = payment.seats ?? 0;
-        const center = await tx.center.findUnique({
-          where: { ownerId: payment.userId },
-        });
-        if (center) {
-          await tx.center.update({
-            where: { id: center.id },
-            data: { seats: { increment: addSeats } },
-          });
-        } else {
-          await tx.center.create({
-            data: {
-              ownerId: payment.userId,
-              name: "Mein Zentrum",
-              inviteCode: randomBytes(9).toString("base64url"),
-              seats: addSeats,
-            },
-          });
-        }
-        // Le rôle du JWT ne se rafraîchit qu'à la reconnexion ; l'accès à
-        // /center est néanmoins possible via la propriété du centre (requireCenterAdmin).
-        // Le pool de crédits du centre = sièges achetés × barème (consommé par
-        // le propriétaire ET ses étudiants membres).
-        await tx.user.update({
-          where: { id: payment.userId },
-          data: {
-            role: "CENTER_ADMIN",
-            credits: { increment: addSeats * CENTER_CREDITS_PER_SEAT },
-          },
-        });
-      }
       return true;
     },
     // Un webhook doit aboutir même si la base est momentanément lente ;
     // 5 s (défaut) est court pour une transaction qui écrit 3 tables.
     { timeout: 15_000 },
   );
+}
+
+/**
+ * Rang des plans PERSONNELS pour la règle « pas de rétrogradation ».
+ * CENTER (plan d'établissement) a le rang de Student : il ouvre le catalogue,
+ * sans les avantages Premium.
+ */
+const PLAN_RANK: Record<string, number> = {
+  FREE: 0,
+  STUDENT: 1,
+  CENTER: 1,
+  PREMIUM: 2,
+};
+
+/** Jours du plan `into` équivalents à `days` jours du plan `bought` (prix XAF). */
+function proratedDays(bought: string, into: string, days: number): number {
+  const paid = getPlanPrice(bought)?.xaf;
+  const target = getPlanPrice(into)?.xaf;
+  if (!paid || !target) return days;
+  return Math.max(1, Math.round((days * paid) / target));
+}
+
+/**
+ * Achat de sièges : crée le centre s'il n'existe pas, puis une DOTATION
+ * datée (CenterSeatGrant) valable SEAT_PERIOD_DAYS à partir de maintenant.
+ * Aucun compteur cumulatif : des sièges expirés ne survivent jamais à un
+ * renouvellement plus petit.
+ */
+async function grantCenterSeats(
+  tx: Prisma.TransactionClient,
+  payment: { userId: string; seats: number | null; providerRef: string },
+  now: number,
+): Promise<void> {
+  const center =
+    (await tx.center.findUnique({ where: { ownerId: payment.userId } })) ??
+    (await tx.center.create({
+      data: {
+        ownerId: payment.userId,
+        name: "Mein Zentrum",
+        inviteCode: randomBytes(9).toString("base64url"),
+      },
+    }));
+  const seats = payment.seats ?? 0;
+  if (seats <= 0) return;
+  await tx.centerSeatGrant.create({
+    data: {
+      centerId: center.id,
+      seats,
+      startsAt: new Date(now),
+      expiresAt: new Date(now + SEAT_PERIOD_DAYS * DAY_MS),
+      paymentRef: payment.providerRef,
+    },
+  });
 }
 
 /**
@@ -128,10 +191,11 @@ export async function getEffectivePlanForUser(id: string): Promise<string> {
   const user = await db.user.findUnique({
     where: { id },
     select: {
+      id: true,
       plan: true,
       planExpiresAt: true,
       centerId: true,
-      center: { select: { owner: { select: { plan: true, planExpiresAt: true } } } },
+      centerJoinedAt: true,
     },
   });
   if (!user) return "FREE";
@@ -146,14 +210,11 @@ export async function getEffectivePlanForUser(id: string): Promise<string> {
   }
 
   // Étudiant membre d'un centre : accès au catalogue complet via le centre,
-  // MAIS seulement tant que l'abonnement du centre (son propriétaire) est
-  // actif — rétrogradation en cascade à l'expiration.
-  if (plan === "FREE" && user.centerId && user.center?.owner) {
-    const owner = user.center.owner;
-    const active =
-      owner.plan !== "FREE" &&
-      (!owner.planExpiresAt || owner.planExpiresAt.getTime() > Date.now());
-    if (active) return "STUDENT";
+  // MAIS seulement s'il occupe un siège ACTIF (dotation non expirée, dans
+  // l'ordre d'adhésion) — un centre qui renouvelle moins de sièges ne garde
+  // pas l'accès de tous ses anciens membres.
+  if (plan === "FREE" && user.centerId) {
+    if (await memberHasActiveSeat(db, user)) return "STUDENT";
   }
   return plan;
 }

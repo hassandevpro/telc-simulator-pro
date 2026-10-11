@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { requireCenterAdmin } from "@/lib/admin-guard";
+import { activeSeats, seatsValidUntil } from "@/lib/center-seats";
 import { db } from "@/lib/db";
 
 /** Clé d'invitation courte et URL-safe. */
@@ -26,12 +27,19 @@ export async function GET() {
   });
   if (!center) return NextResponse.json({ center: null, members: [] });
 
+  const [seats, validUntil] = await Promise.all([
+    activeSeats(db, center.id),
+    seatsValidUntil(db, center.id),
+  ]);
+
   return NextResponse.json({
     center: {
       id: center.id,
       name: center.name,
       inviteCode: center.inviteCode,
-      seats: center.seats,
+      // Sièges ACTIFS (dotations non expirées), pas le compteur historique.
+      seats,
+      seatsValidUntil: validUntil?.getTime() ?? null,
       memberCount: center.members.length,
     },
     members: center.members,
