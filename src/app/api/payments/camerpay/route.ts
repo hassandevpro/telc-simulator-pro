@@ -4,8 +4,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CENTER_SEAT_PRICE, getPlanPrice } from "@/config/pricing";
-import { modeRequiredBody, prepareCenterPurchase } from "@/lib/center-purchase";
-import { blockStudentDuringPremium } from "@/lib/plan-purchase";
+import { prepareCenterPurchase, quoteErrorResponse } from "@/lib/center-purchase";
+import { guardPlanPurchase } from "@/lib/plan-purchase";
 import {
   CAMERPAY_PAYMENT_METHOD,
   initiateCamerPayPayment,
@@ -75,8 +75,8 @@ export async function POST(request: Request) {
   }
   const { plan } = parsed.data;
 
-  // Pas d'achat Student pendant un Premium actif (lib/plan-purchase.ts).
-  const blocked = await blockStudentDuringPremium(user.id, plan);
+  // Gardes d'achat : plan sans échéance, Student pendant Premium (lib/plan-purchase.ts).
+  const blocked = await guardPlanPurchase(user.id, plan);
   if (blocked) return blocked;
 
   // ── Montant : décidé ICI, jamais lu depuis la requête ──────────────────
@@ -95,7 +95,8 @@ export async function POST(request: Request) {
       currency: "XAF",
     });
     if (!quote.ok) {
-      return NextResponse.json(modeRequiredBody(quote), { status: 409 });
+      const failure = quoteErrorResponse(quote);
+      return NextResponse.json(failure.body, { status: failure.status });
     }
     amount = Math.round(quote.quote.amount);
     centerMode = quote.quote.mode;

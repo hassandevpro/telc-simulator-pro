@@ -116,15 +116,21 @@ model Center {
  * prolonge donc jamais les sièges d'un achat précédent.
  */
 model CenterSeatGrant {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   centerId   String
-  center     Center   @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  center     Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
   seats      Int
   startsAt   DateTime
   expiresAt  DateTime
   // Paiement à l'origine de la dotation (null pour la reprise historique).
-  paymentRef String?  @unique
-  createdAt  DateTime @default(now())
+  paymentRef String?   @unique
+  // Crédits attachés à la dotation et leur date de versement : ils sont
+  // versés au pool du centre quand la période COMMENCE (renouvellement
+  // payé d'avance = crédits à la date de début, pas au paiement).
+  // creditedAt NULL = pas encore versés.
+  credits    Int       @default(0)
+  creditedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([centerId, expiresAt])
 }

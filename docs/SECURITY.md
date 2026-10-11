@@ -33,10 +33,13 @@ production après validation. Rien n'est déployé en production sans accord exp
    | `20261011120000_security_hardening` | `creditStatus`, `emailVerifiedBy`, `centerJoinedAt`, table `CenterSeatGrant` | non fournie (voir note) |
    | `20261012090000_private_audio` | `ExamPart.audioPath`, `ExamSession.audioIssued` | `down.sql` ✅ testé |
    | `20261013090000_commercial_rules` | `Payment.centerMode/periodDays`, `ExamSession.creditAccountId`, table `CreditAdjustment` | `down.sql` ✅ testé |
+   | `20261014090000_deferred_seat_credits` | `CenterSeatGrant.credits/creditedAt` (crédits versés au début de la période) | `down.sql` ✅ testé (verse d'abord les crédits en attente) |
 
    *Note (migration 1)* : elle ne supprime ni ne modifie rien ; ses colonnes
    peuvent rester sans effet si l'on revient à l'ancien code. Seule la reprise
-   des sièges (`CenterSeatGrant`) est une conversion de données (section 4).
+   des sièges (`CenterSeatGrant`) est une conversion de données, décrite en
+   section 4 (« Droits existants »). Elle reproduit **exactement** l'ancienne
+   règle d'accès : voir les tests `int-entitlements` et `int-migrations`.
 4. **Déployer le code.**
 5. 🔧 **Rendre le bucket `audio` privé** (section 2) — **après** le déploiement :
    le nouveau code fonctionne bucket public *ou* privé ; l'ancien code ne
@@ -48,8 +51,9 @@ production après validation. Rien n'est déployé en production sans accord exp
 | Donnée | Effet |
 | --- | --- |
 | Sessions en cours | `creditStatus = NULL` (historique) : l'ancien débit à la remise leur est appliqué une fois. |
-| Centres avec `seats > 0` | Une dotation valable jusqu'à `planExpiresAt` du propriétaire (ou +30 jours s'il n'en a pas). `Center.seats` n'est plus lu mais conservé. |
-| Membres de centre | `centerJoinedAt = createdAt` (priorité si les sièges actifs sont moins nombreux que les membres). |
+| Centres (propriétaire en plan payant) | Une dotation de `max(quota, nombre de membres)` sièges, valable jusqu'à `planExpiresAt` du propriétaire. **Propriétaire sans date : sièges sans échéance (31/12/2099, « unbefristet »), jamais 30 jours.** Propriétaire en plan FREE : aucune dotation (l'ancien code ne donnait aucun accès). `Center.seats` n'est plus lu mais conservé. |
+| Membres de centre | `centerJoinedAt = createdAt`. Aucun membre existant ne perd l'accès, même au-delà du quota ou avec un quota à 0 (comme dans l'ancien code). |
+| Dotations existantes | Marquées **déjà créditées** (leurs crédits ont été versés au paiement) : jamais de second versement. |
 | Comptes Google | `emailVerifiedBy = 'GOOGLE'`. Les comptes à mot de passe restent à prouver, sans autre modification. |
 | `ExamPart.audioUrl` | **Jamais modifié.** `audioPath` en est extrait quand l'URL est celle du bucket `audio` avec un nom sûr. Les autres lignes (démo `/audio/demo/…`, URL externes, sous-dossiers) gardent `audioPath = NULL`. |
 | Paiements en attente | `centerMode = NULL` : traités comme avant (30 jours à partir de l'activation). |
@@ -216,17 +220,57 @@ nouveau build, pas seulement un redémarrage.
 | **Centre — renouvellement** | Sièges actifs, choix « renouveler » : 30 jours qui **commencent à la fin de la dernière période payée**, prix plein. Les renouvellements anticipés s'enchaînent, sans chevauchement (même payés simultanément). |
 | **Centre — sièges en plus** | Choix « ajouter » : sièges actifs **maintenant** jusqu'à l'échéance de la période en cours, **au prorata** : `siège × prix × jours restants / 30`, tout jour entamé dû, minimum 1 jour, XAF arrondi au franc, EUR au centime. Exemple : 10 sièges, 10 jours restants → 8 333 FCFA / 13,33 €. |
 | **Choix obligatoire** | Tant que des sièges sont actifs, le serveur refuse de deviner entre renouveler et ajouter (409 `CENTER_MODE_REQUIRED`). Le montant ne vient jamais du navigateur ; `/api/center/quote` affiche exactement ce qui sera facturé. |
+| **Crédits d'un renouvellement** | Versés au **début de la nouvelle période** (règle validée), pas au paiement. Ils sont attachés à la dotation (`credits`, `creditedAt NULL`) et versés au pool du centre dès que la date de début est atteinte, à la première lecture ou au premier débit de crédits du compte (aucune tâche planifiée). Une seule instruction SQL marque la dotation et verse les crédits : 15 lectures simultanées ne versent qu'une fois. `/center` annonce « X Credits … werden am … gutgeschrieben ». Nouveau achat et ajout : période déjà commencée, crédits versés tout de suite. |
 
-### Hypothèses à confirmer (non précisées dans les décisions)
+### Droits existants et comptes SANS date d'expiration
+
+**Constat dans le code.** Avant ces sprints, un compte payant dont `planExpiresAt`
+est NULL a un accès **sans échéance** (aucune rétrogradation n'existait pour lui) :
+ce sont typiquement des plans attribués à la main avant les paiements en ligne
+(« l'attribution des plans se fait via l'administration »). Le premier jet de
+ces sprints les aurait fait perdre : sièges réduits à 30 jours par la migration,
+plan remplacé par un plan de 30 jours à l'achat. Corrigé et **couvert par des
+tests qui échouent si le défaut revient** (`tests/int-entitlements.test.ts`).
+
+**Règle appliquée par le code** (aucune donnée réelle n'est modifiée) :
+
+| Cas | Règle |
+| --- | --- |
+| Plan payant **sans date** (A1) | Conservé tel quel. Un achat en ligne Student/Premium est **refusé avant paiement** (409 `OPEN_ENDED_PLAN`, message vers le support) ; filet au webhook : plan et absence d'échéance conservés, seuls les crédits payés sont ajoutés. |
+| Propriétaire de centre **sans date** (A2) | Sièges repris **sans échéance** (31/12/2099, affiché « unbefristet »). Achat/ajout/renouvellement en ligne refusés (409 `CENTER_OPEN_ENDED`) : un prorata sur 70 ans n'a pas de sens. |
+| Centre dont le propriétaire est en plan payant | Sièges = `max(quota, membres)` : plus de membres que de sièges (C1) ou quota 0 avec membres (C2) → tous gardent l'accès, comme avant. |
+| Propriétaire en plan **FREE** (C3) | Aucun droit créé (l'ancien code n'en donnait pas). |
+| Abonnement du propriétaire **expiré** (B1) | Dotation déjà expirée : pas d'accès, comme avant. |
+| Paiements **en attente** à la bascule (E1) | `centerMode NULL` : traités avec l'ancienne règle (30 jours dès confirmation). |
+| Paiements déjà **encaissés** | Jamais rejoués ni modifiés. |
+| Crédits en solde | Jamais touchés par les migrations. |
+
+**Identifier les cas réels** — `scripts/audit-entitlements.sql`, **lecture seule**
+(transaction `READ ONLY` : PostgreSQL refuse toute écriture, puis `ROLLBACK`) :
+
+```bash
+psql "$DATABASE_URL" -f scripts/audit-entitlements.sql
+```
+
+Chaque ligne porte une action : **KEEP** (droit conservé par le code), **REVIEW**
+(anomalie à examiner : paiement récent sans plan actif `B2`, plan CENTER sans
+centre `C4`, échéance à plus de 400 jours `D1`), **INFO**. À lancer sur la copie
+de production (STAGING.md étape 4) **avant et après** la migration.
+
+**Régularisation (décision humaine, hors du code).** Pour chaque compte `A1`/`A2`,
+décider : (a) le laisser « sans échéance » (le code le protège), ou (b) lui
+attribuer une date de fin explicite correspondant à ce qui a été payé. Seul (b)
+remet le compte dans le parcours d'achat en ligne. Aucune de ces modifications
+n'est faite par une migration ni par le code.
+
+### Hypothèses restant à confirmer
 
 - **Crédits d'un ajout au prorata** : proportionnels aux jours payés
-  (`15 × sièges × jours / 30`, arrondi). Les crédits d'un renouvellement sont
-  versés **au paiement** (comme avant), pas au début de la période.
-- **Reprise des centres existants** : leur quota devient une dotation valable
-  jusqu'à la fin de l'abonnement du propriétaire (ou +30 jours sans date) : aucun
-  centre ne perd d'accès à la migration.
+  (`15 × sièges × jours / 30`, arrondi) et versés tout de suite.
 - **Un rejeu gratuit remboursé** n'est pas possible (aucun débit à rendre) ; en
   revanche un examen remboursé puis remis compte ensuite comme « déjà fait ».
+- **Plan CENTER du propriétaire** : il court jusqu'à la fin de la dernière période
+  de sièges payée ; un Student/Premium encore actif est conservé.
 
 ---
 
@@ -243,10 +287,12 @@ nouveau build, pas seulement un redémarrage.
 
 ### Sur vos comptes 🔧 — non vérifiable depuis le dépôt
 
-- [ ] **Flutterwave** : les **nouvelles tentatives de webhook sont activées**
-      (*Settings → Webhooks → Retry*). Sans elles, un 503 ne sera jamais rejoué et
-      un paiement réel peut rester non activé. *Je ne connais pas avec certitude
-      leur politique de relance : à vérifier dans leur documentation/tableau de bord.*
+- [ ] **Flutterwave** : les **relances de webhook** sont actives et leur politique est
+      connue. **Non vérifié** : les sources consultées se contredisent (« 3 relances à
+      30 min d'intervalle » pour l'une, « jusqu'à ~5 relances en 24 h » pour une autre)
+      et je n'ai pas pu lire leur documentation officielle. Sans relance, un 503 ne
+      sera jamais rejoué et un paiement réel peut rester non activé : à confirmer dans
+      le tableau de bord ou auprès du support, puis noter la politique réelle ici.
 - [ ] **Flutterwave** : `FLW_SECRET_HASH` long (≥ 32 caractères aléatoires), identique
       dans le tableau de bord et dans Vercel ; clés *live* distinctes des clés *test*.
 - [ ] **Stripe** : l'endpoint écoute `checkout.session.completed` ; `STRIPE_WEBHOOK_SECRET`
@@ -297,11 +343,12 @@ pointer `TEST_DATABASE_URL` vers une base réelle (les URL Supabase/AWS sont ref
 | `int-commercial`, `center-pricing` | Student/Premium, nouveau/renouvellement/ajout, prorata, enchaînement simultané, remboursement unique |
 | `int-billing`, `idempotence-paiement`, `webhooks-regression`, `camerpay-webhook` | idempotence des paiements, webhooks |
 | `int-auth`, `security-units` | liaison Google, rôles révoqués, autosave récupérable, limitation de débit |
-| `int-migrations` | les 3 migrations sur base temporaire (données d'avant, après, retour arrière) |
+| `int-entitlements`, `int-audit` | droits existants : plans et centres **sans date**, membres sans quota, propriétaire FREE ; audit en lecture seule (cas détectés, rien modifié, écriture refusée) |
+| `int-migrations` | les 4 migrations sur base temporaire (données d'avant, après, retour arrière) |
 
 Les contrôles clés ont été **validés par mutation** : en réintroduisant l'ancien
 défaut (limite d'émissions retirée, verrou du centre retiré, prorata supprimé,
-blocage Student retiré, `upsert:true`, projection candidat désactivée), les tests
+blocage Student retiré, `upsert:true`, projection candidat désactivée, crédits de renouvellement versés au paiement, garde d'unicité du versement retirée, plan sans date traité comme inactif, migration à 30 jours), les tests
 échouent. **Non couvert indépendamment** : la condition `status = 'IN_PROGRESS'`
 dans le SQL de réservation d'une émission audio double un contrôle JavaScript
 antérieur ; elle ne protège que d'une course (session fermée entre les deux), non

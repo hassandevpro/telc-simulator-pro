@@ -90,6 +90,18 @@ export async function creditAccountFor(
   userId: string,
   now: Date = new Date(),
 ): Promise<string> {
+  const accountId = await resolveCreditAccount(client, userId, now);
+  // Toute lecture ou débit de crédits passe ici : les crédits d'une période
+  // qui vient de commencer sont versés avant d'être comptés.
+  await settleDueSeatCredits(client, accountId);
+  return accountId;
+}
+
+async function resolveCreditAccount(
+  client: Client,
+  userId: string,
+  now: Date,
+): Promise<string> {
   const user = await client.user.findUnique({
     where: { id: userId },
     select: {
@@ -139,4 +151,51 @@ export async function seatPeriodState(
     }),
   ]);
   return { activeEnd: active._max.expiresAt, lastEnd: upcoming._max.expiresAt };
+}
+
+/**
+ * Verse au propriétaire les crédits des dotations de sièges dont la période a
+ * COMMENCÉ et qui n'ont pas encore été créditées (renouvellements payés
+ * d'avance). Appelé à chaque lecture ou débit de crédits : il n'y a pas de
+ * tâche planifiée, la date de début suffit à déclencher le versement.
+ *
+ * IDEMPOTENT ET SANS COURSE : une seule instruction SQL marque les dotations
+ * comme créditées ET lit leurs crédits (UPDATE … RETURNING). Deux appels
+ * simultanés : le second attend le verrou de ligne, ne retrouve plus la
+ * condition `creditedAt IS NULL` et ajoute 0 — un versement n'a lieu qu'une
+ * fois.
+ */
+export async function settleDueSeatCredits(
+  client: Client,
+  ownerId: string,
+): Promise<void> {
+  await client.$executeRaw`
+    WITH due AS (
+      UPDATE "CenterSeatGrant" g
+      SET "creditedAt" = now()
+      FROM "Center" c
+      WHERE g."centerId" = c."id"
+        AND c."ownerId" = ${ownerId}
+        AND g."creditedAt" IS NULL
+        AND g."startsAt" <= now()
+      RETURNING g."credits"
+    )
+    UPDATE "User"
+    SET "credits" = "credits" + (SELECT COALESCE(SUM("credits"), 0) FROM due)
+    WHERE "id" = ${ownerId}
+      AND EXISTS (SELECT 1 FROM due)
+  `;
+}
+
+/** Crédits de renouvellements payés d'avance, pas encore versés (affichage). */
+export async function pendingSeatCredits(
+  client: Client,
+  centerId: string,
+): Promise<{ credits: number; nextAt: Date | null }> {
+  const aggregate = await client.centerSeatGrant.aggregate({
+    where: { centerId, creditedAt: null, credits: { gt: 0 } },
+    _sum: { credits: true },
+    _min: { startsAt: true },
+  });
+  return { credits: aggregate._sum.credits ?? 0, nextAt: aggregate._min.startsAt };
 }

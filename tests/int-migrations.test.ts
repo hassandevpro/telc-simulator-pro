@@ -168,15 +168,21 @@ test("migration sécurité : sièges repris en dotations, comptes et paiements i
         ('owner',  'o@x',  'h',  'O',  now(), 'CENTER', now() + interval '12 days', now() - interval '90 days', now()),
         ('owner2', 'o2@x', 'h',  'O2', now(), 'CENTER', NULL, now(), now()),
         ('owner3', 'o3@x', 'h',  'O3', now(), 'CENTER', now() + interval '5 days', now(), now()),
+        ('owner4', 'o4@x', 'h',  'O4', now(), 'FREE',   NULL, now(), now()),
+        ('owner5', 'o5@x', 'h',  'O5', now(), 'CENTER', now() + interval '9 days', now(), now()),
         ('goog',   'g@x',  NULL, 'G',  now(), 'FREE',   NULL, now(), now()),
         ('pw',     'pw@x', 'h',  'PW', now(), 'FREE',   NULL, now(), now()),
         ('pw2',    'pw2@x','h',  'PW2', NULL, 'FREE',   NULL, now(), now());
       INSERT INTO "Center"(id, name, "ownerId", "inviteCode", seats) VALUES
         ('c1', 'C1', 'owner',  'inv1', 100),
         ('c2', 'C2', 'owner2', 'inv2', 7),
-        ('c3', 'C3', 'owner3', 'inv3', 0);
+        ('c3', 'C3', 'owner3', 'inv3', 0),
+        ('c4', 'C4', 'owner4', 'inv4', 5),
+        ('c5', 'C5', 'owner5', 'inv5', 0);
       INSERT INTO "User"(id, email, "passwordHash", name, "centerId", "createdAt", "updatedAt")
-        VALUES ('m1', 'm1@x', 'h', 'M', 'c1', now() - interval '5 days', now());
+        VALUES ('m1', 'm1@x', 'h', 'M', 'c1', now() - interval '5 days', now()),
+               ('m5a', 'm5a@x', 'h', 'M5a', 'c5', now() - interval '4 days', now()),
+               ('m5b', 'm5b@x', 'h', 'M5b', 'c5', now() - interval '3 days', now());
       INSERT INTO "Payment"(id, "userId", provider, "providerRef", plan, amount, currency, status, "updatedAt")
         VALUES ('pay1', 'owner', 'STRIPE', 'ref-1', 'CENTER', 250000, 'XAF', 'SUCCESS', now());
     `);
@@ -184,15 +190,21 @@ test("migration sécurité : sièges repris en dotations, comptes et paiements i
 
     await db.query(sql(`${SECURITY_MIGRATION}/migration.sql`));
 
-    // Sièges : une dotation par centre à quota > 0, valable jusqu'à la fin de l'abonnement payé.
+    // Sièges : l'ancien droit d'accès est reproduit à l'identique.
     const grants = await db.query(
-      `SELECT "centerId", seats, round(extract(epoch FROM ("expiresAt" - now())) / 86400)::int AS days
+      `SELECT "centerId", seats,
+              CASE WHEN extract(year FROM "expiresAt") >= 2099 THEN -1
+                   ELSE round(extract(epoch FROM ("expiresAt" - now())) / 86400)::int END AS days
        FROM "CenterSeatGrant" ORDER BY "centerId"`,
     );
     assert.deepEqual(
       grants.rows.map((row) => [row.centerId, row.seats, row.days]),
-      [["c1", 100, 12], ["c2", 7, 30]],
-      "c1 jusqu'à la fin de l'abonnement ; c2 (sans date) 30 jours ; c3 (0 siège) aucune dotation",
+      [
+        ["c1", 100, 12], // jusqu'à la fin de l'abonnement payé
+        ["c2", 7, -1], //   propriétaire SANS date : sièges SANS échéance (jamais 30 jours)
+        ["c5", 2, 9], //    quota 0 mais 2 membres : ils gardent l'accès (comme avant)
+      ],
+      "c3 (quota 0, aucun membre) et c4 (propriétaire FREE : aucun droit avant) n'ont aucune dotation",
     );
     assert.equal(
       (await db.query(`SELECT seats FROM "Center" WHERE id = 'c1'`)).rows[0].seats,
@@ -271,5 +283,55 @@ test("migration règles commerciales : additive, paiements en attente préservé
     assert.equal((await db.query(`SELECT count(*)::int AS n FROM "ExamSession"`)).rows[0].n, 1);
     const tables = await db.query(`SELECT to_regclass('"CreditAdjustment"') AS t`);
     assert.equal(tables.rows[0].t, null, "journal supprimé par le retour arrière (exporter avant si nécessaire)");
+  }),
+);
+
+const DEFERRED_MIGRATION = "20261014090000_deferred_seat_credits";
+
+/**
+ * Crédits de renouvellement versés au début de la période : les dotations
+ * d'avant ont déjà été créditées au paiement (ancienne règle) et ne doivent
+ * jamais l'être une seconde fois ; le retour arrière ne doit pas perdre les
+ * crédits d'un renouvellement payé d'avance mais pas encore versé.
+ */
+test("migration crédits différés : dotations existantes déjà créditées, retour arrière sans perte", { skip: integrationSkip }, () =>
+  withScratch(DEFERRED_MIGRATION, async (db, url) => {
+    await db.query(`
+      INSERT INTO "User"(id, email, name, credits, plan, "createdAt", "updatedAt")
+        VALUES ('owner', 'o@x', 'O', 40, 'CENTER', now(), now());
+      INSERT INTO "Center"(id, name, "ownerId", "inviteCode") VALUES ('c1', 'C', 'owner', 'inv');
+      INSERT INTO "CenterSeatGrant"(id, "centerId", seats, "startsAt", "expiresAt", "createdAt")
+        VALUES ('g-old', 'c1', 10, now() - interval '5 days', now() + interval '25 days', now() - interval '5 days');
+    `);
+
+    await db.query(sql(`${DEFERRED_MIGRATION}/migration.sql`));
+
+    const old = await db.query(`SELECT credits, "creditedAt" = "createdAt" AS credited FROM "CenterSeatGrant" WHERE id = 'g-old'`);
+    assert.deepEqual(old.rows[0], { credits: 0, credited: true }, "ancienne dotation : jamais recréditée");
+    assert.equal((await db.query(`SELECT credits FROM "User" WHERE id = 'owner'`)).rows[0].credits, 40);
+
+    // Un renouvellement payé d'avance après la migration : crédits en attente.
+    await db.query(`
+      INSERT INTO "CenterSeatGrant"(id, "centerId", seats, "startsAt", "expiresAt", credits)
+        VALUES ('g-renew', 'c1', 20, now() + interval '25 days', now() + interval '55 days', 300);
+    `);
+
+    if (!hasPsql) return;
+    const down = spawnSync(
+      "psql",
+      [url, "-v", "ON_ERROR_STOP=1", "-f", path.join(MIGRATIONS, DEFERRED_MIGRATION, "down.sql")],
+      { encoding: "utf8" },
+    );
+    assert.equal(down.status, 0, down.stderr);
+    assert.equal(
+      (await db.query(`SELECT credits FROM "User" WHERE id = 'owner'`)).rows[0].credits,
+      340,
+      "les 300 crédits en attente sont versés avant la suppression des colonnes",
+    );
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM "CenterSeatGrant"`)).rows[0].n, 2, "aucune dotation supprimée");
+    const columns = await db.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'CenterSeatGrant' AND column_name IN ('credits', 'creditedAt')`,
+    );
+    assert.equal(columns.rowCount, 0);
   }),
 );

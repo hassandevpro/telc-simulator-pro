@@ -267,7 +267,10 @@ test("RENEW : prix plein, la nouvelle période commence à l'échéance, rien n'
   assert.equal(await seatsLib.activeSeats(db, center.id), 10);
   // Le plan du propriétaire court jusqu'à la fin de la période payée.
   near(days((await user("owner")).planExpiresAt), 40, "plan propriétaire");
-  assert.equal((await user("owner")).credits, 300);
+  // Règle validée : crédits d'un renouvellement versés au DÉBUT de la nouvelle période.
+  assert.equal((await user("owner")).credits, 0, "rien n'est versé au paiement");
+  assert.equal(next.credits, 300);
+  assert.equal(next.creditedAt, null);
 });
 
 test("deux RENEW payés EN MÊME TEMPS s'enchaînent (verrou du centre) au lieu de se chevaucher", { skip: integrationSkip }, async () => {
@@ -285,6 +288,7 @@ test("deux RENEW payés EN MÊME TEMPS s'enchaînent (verrou du centre) au lieu 
   const [, a, b] = all;
   near((b.startsAt.getTime() - a.expiresAt.getTime()) / DAY, 0, "la seconde commence quand la première finit");
   near(days(b.expiresAt), 70, "10 j + 30 j + 30 j");
+  assert.equal((await user("owner")).credits, 0, "aucun crédit avant le début de chaque période");
 });
 
 test("ADD : prorata sur les jours restants, sièges actifs MAINTENANT mais pas au-delà de l'échéance", { skip: integrationSkip }, async () => {
@@ -335,7 +339,9 @@ test("webhook rejoué en parallèle : une seule dotation, un seul crédit", { sk
   const ref = (await lastPayment()).providerRef;
   await Promise.all(Array.from({ length: 6 }, () => billing.activatePlanByRef(ref)));
   assert.equal((await grants(center.id)).length, 2);
-  assert.equal((await user("owner")).credits, 60);
+  // Le renouvellement est payé d'avance : ses crédits attendent le début de la période.
+  assert.equal((await user("owner")).credits, 0);
+  assert.equal((await db.centerSeatGrant.findFirstOrThrow({ where: { paymentRef: ref } })).credits, 60);
 });
 
 test("paiement en attente ANTÉRIEUR à la règle (centerMode NULL) : ancien traitement préservé", { skip: integrationSkip }, async () => {
@@ -509,4 +515,72 @@ test("support : recherche des sessions par e-mail réservée à l'admin, rembour
   assert.equal(body.user.email, "cand@test.local");
   assert.equal(body.sessions[0].creditStatus, "REFUNDED");
   assert.equal(body.sessions[0].refund.reason, "Geste commercial");
+});
+
+/* ══════ Règle 5 : crédits d'un renouvellement versés au début de la période ══════ */
+
+test("RENEW : crédits versés quand la période COMMENCE — une seule fois, même sous lectures simultanées", { skip: integrationSkip }, async () => {
+  const center = await centerWithActiveSeats(10, 10);
+  as("owner");
+  await buySeats("flutterwave", 20, "renew");
+  await billing.activatePlanByRef((await lastPayment()).providerRef);
+  const { settleDueSeatCredits } = await import("@/lib/center-seats");
+
+  // Avant le début : rien, même en relisant plusieurs fois.
+  await settleDueSeatCredits(db, "owner");
+  assert.equal((await user("owner")).credits, 0);
+  assert.equal(await seatsLib.creditBalanceFor(db, "owner"), 0);
+
+  // La période en cours se termine : le renouvellement commence.
+  await db.centerSeatGrant.updateMany({
+    where: { centerId: center.id, seats: 10 },
+    data: { startsAt: new Date(Date.now() - 31 * DAY), expiresAt: new Date(Date.now() - 1000) },
+  });
+  await db.centerSeatGrant.updateMany({
+    where: { centerId: center.id, seats: 20 },
+    data: { startsAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 30 * DAY) },
+  });
+
+  // 15 lectures de solde en parallèle (tableau de bord, démarrages, aperçus…).
+  const balances = await Promise.all(Array.from({ length: 15 }, () => seatsLib.creditBalanceFor(db, "owner")));
+  assert.ok(balances.every((balance) => balance === 300), `soldes vus : ${[...new Set(balances)]}`);
+  assert.equal((await user("owner")).credits, 300, "versé UNE seule fois");
+  assert.notEqual((await db.centerSeatGrant.findFirstOrThrow({ where: { seats: 20 } })).creditedAt, null);
+
+  await settleDueSeatCredits(db, "owner");
+  assert.equal((await user("owner")).credits, 300, "idempotent");
+});
+
+test("RENEW : un étudiant du centre démarre avec les crédits versés à l'instant du début de période", { skip: integrationSkip }, async () => {
+  const exam = await createPaidExam(db);
+  const center = await centerWithActiveSeats(5, 10);
+  await db.centerSeatGrant.create({
+    data: { centerId: center.id, seats: 5, startsAt: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 30 * DAY), credits: 75 },
+  });
+  // Période précédente terminée ; le propriétaire n'a plus aucun crédit.
+  await db.centerSeatGrant.updateMany({ where: { centerId: center.id, credits: 0 }, data: { startsAt: new Date(Date.now() - 31 * DAY), expiresAt: new Date(Date.now() - 2000) } });
+  await createUser(db, { id: "eleve", plan: "FREE", planExpiresAt: null, credits: 0, centerId: center.id, centerJoinedAt: new Date(Date.now() - DAY) });
+  as("eleve");
+  const body = (status: string, startedAt: number | null) =>
+    jsonRequest("/api/sessions", "POST", { sessionId: "s1", examId: exam.examId, status, startedAt, answers: {}, playedAudioIds: [] });
+  await saveRoute(body("AUDIO_CHECK", null));
+  assert.equal((await saveRoute(body("IN_PROGRESS", Date.now()))).status, 200, "les crédits dus sont versés avant le contrôle du solde");
+  assert.equal((await user("owner")).credits, 74);
+});
+
+test("NEW et ADD : crédits versés immédiatement (la période commence maintenant)", { skip: integrationSkip }, async () => {
+  await createUser(db, { id: "fresh", plan: "FREE", planExpiresAt: null, credits: 0 });
+  as("fresh");
+  await buySeats("flutterwave", 4);
+  await billing.activatePlanByRef((await lastPayment()).providerRef);
+  assert.equal((await user("fresh")).credits, 60);
+  assert.notEqual((await db.centerSeatGrant.findFirstOrThrow()).creditedAt, null);
+});
+
+test("migration : les dotations d'avant sont marquées DÉJÀ créditées (aucun double versement)", { skip: integrationSkip }, async () => {
+  const center = await centerWithActiveSeats(10, 10);
+  await db.centerSeatGrant.updateMany({ data: { credits: 150, creditedAt: new Date() } });
+  await db.user.update({ where: { id: "owner" }, data: { credits: 7 } });
+  await seatsLib.settleDueSeatCredits(db, "owner");
+  assert.equal((await user("owner")).credits, 7, `centre ${center.id}`);
 });

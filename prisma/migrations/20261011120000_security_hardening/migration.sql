@@ -34,12 +34,28 @@ CREATE INDEX "CenterSeatGrant_centerId_expiresAt_idx" ON "CenterSeatGrant"("cent
 ALTER TABLE "CenterSeatGrant" ADD CONSTRAINT "CenterSeatGrant_centerId_fkey"
     FOREIGN KEY ("centerId") REFERENCES "Center"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Reprise : le quota cumulé d'un centre devient UNE dotation valable jusqu'à
--- la fin de l'abonnement actuel du propriétaire (règle d'accès antérieure).
--- Un propriétaire sans date de fin conserve ses sièges 30 jours, le temps
--- d'un renouvellement.
+-- Reprise : les droits d'accès ACTUELS des centres deviennent UNE dotation.
+-- Règle d'accès antérieure, reproduite à l'identique (billing.ts avant le
+-- sprint) : un membre avait accès au catalogue tant que le PROPRIÉTAIRE du
+-- centre avait un plan payant (plan <> 'FREE') non expiré — quel que soit le
+-- quota `seats`, et quel que soit le nombre de membres.
+--  - sièges repris = le plus grand de `seats` et du nombre de membres déjà
+--    rattachés : aucun membre existant ne perd l'accès ;
+--  - échéance = fin de l'abonnement du propriétaire. SANS date de fin, les
+--    sièges n'avaient pas d'échéance : ils reçoivent le 31/12/2099 (affiché
+--    « unbefristet »), jamais une durée plus courte. À régulariser par un
+--    humain (docs/SECURITY.md, règle de migration) ; cette migration ne le fait pas ;
+--  - propriétaire en plan FREE : l'ancien code ne donnait AUCUN accès, la
+--    migration n'en crée donc aucun ;
+--  - propriétaire à l'abonnement expiré : dotation déjà expirée (aucun accès,
+--    comme avant).
 INSERT INTO "CenterSeatGrant" ("id", "centerId", "seats", "startsAt", "expiresAt")
-SELECT 'legacy_' || c."id", c."id", c."seats", c."createdAt",
-       COALESCE(u."planExpiresAt", CURRENT_TIMESTAMP + INTERVAL '30 days')
-FROM "Center" c JOIN "User" u ON u."id" = c."ownerId"
-WHERE c."seats" > 0;
+SELECT 'legacy_' || c."id", c."id", GREATEST(c."seats", m."n"), c."createdAt",
+       COALESCE(u."planExpiresAt", TIMESTAMP '2099-12-31 00:00:00')
+FROM "Center" c
+JOIN "User" u ON u."id" = c."ownerId"
+JOIN LATERAL (
+  SELECT count(*)::int AS "n" FROM "User" x WHERE x."centerId" = c."id"
+) m ON true
+WHERE u."plan" <> 'FREE'
+  AND GREATEST(c."seats", m."n") > 0;

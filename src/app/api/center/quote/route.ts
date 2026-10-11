@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { CENTER_SEAT_PRICE } from "@/config/pricing";
 import { auth } from "@/lib/auth";
-import { prepareCenterPurchase } from "@/lib/center-purchase";
+import { prepareCenterPurchase, quoteErrorResponse } from "@/lib/center-purchase";
 import { quoteCenterPurchase } from "@/lib/center-pricing";
 
 const querySchema = z.object({
@@ -42,6 +42,14 @@ export async function GET(request: Request) {
   const [eur, xaf] = await Promise.all([quoteFor("EUR"), quoteFor("XAF")]);
   if (!eur.ok || !xaf.ok) {
     const needs = !eur.ok ? eur : (xaf as Extract<typeof xaf, { ok: false }>);
+    if (needs.code === "CENTER_OPEN_ENDED") {
+      // Droits historiques sans échéance : rien à acheter en ligne.
+      return NextResponse.json({
+        needsMode: false,
+        blocked: true,
+        message: quoteErrorResponse(needs).body.error,
+      });
+    }
     return NextResponse.json({
       needsMode: true,
       activeEnd: needs.activeEnd.getTime(),
@@ -58,5 +66,8 @@ export async function GET(request: Request) {
     expiresAt: xaf.quote.expiresAt.getTime(),
     billedDays: xaf.quote.billedDays,
     credits: xaf.quote.credits,
+    // Crédits versés au DÉBUT de la période : maintenant, ou à sa date de début.
+    creditsAt: xaf.quote.startsAt.getTime(),
+    creditsDeferred: xaf.quote.startsAt.getTime() > Date.now() + 60_000,
   });
 }

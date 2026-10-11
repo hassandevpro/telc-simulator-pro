@@ -37,13 +37,29 @@ export async function prepareCenterPurchase(input: {
   });
 }
 
-/** Réponse HTTP d'un choix de mode manquant (409) — commune aux routes. */
-export function modeRequiredBody(result: Extract<QuoteResult, { ok: false }>) {
+/** Corps et statut HTTP d'un devis refusé — communs aux routes de paiement et au devis. */
+export function quoteErrorResponse(result: Extract<QuoteResult, { ok: false }>): {
+  status: number;
+  body: Record<string, unknown>;
+} {
+  if (result.code === "CENTER_OPEN_ENDED") {
+    return {
+      status: 409,
+      body: {
+        error:
+          "Die Plätze Ihres Zentrums sind unbefristet vergeben. Erweiterung und Verlängerung erfolgen über den Support (WhatsApp), damit Ihre bestehenden Rechte erhalten bleiben.",
+        code: result.code,
+      },
+    };
+  }
   return {
-    error:
-      "Ihr Zentrum hat bereits aktive Plätze. Bitte wählen Sie: nächste Periode verlängern oder zusätzliche Plätze bis zum Periodenende (anteilig).",
-    code: result.code,
-    activeEnd: result.activeEnd.getTime(),
-    lastEnd: result.lastEnd.getTime(),
+    status: 409,
+    body: {
+      error:
+        "Ihr Zentrum hat bereits aktive Plätze. Bitte wählen Sie: nächste Periode verlängern oder zusätzliche Plätze bis zum Periodenende (anteilig).",
+      code: result.code,
+      activeEnd: result.activeEnd.getTime(),
+      lastEnd: result.lastEnd.getTime(),
+    },
   };
 }

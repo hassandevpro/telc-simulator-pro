@@ -64,16 +64,20 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
         plan: (user?.plan ?? "FREE") as string,
         expiresAt: user?.planExpiresAt?.getTime() ?? null,
       };
+      // Plan payant SANS date de fin : droit historique « sans échéance »
+      // (attribué à la main). Un achat ne doit jamais le remplacer par un plan
+      // de 30 jours : plan et absence d'échéance sont conservés, seule la
+      // valeur payée (crédits) est ajoutée.
+      const openEnded = current.plan !== "FREE" && current.expiresAt === null;
       const currentActive =
-        current.plan !== "FREE" && current.expiresAt !== null && current.expiresAt > now;
+        current.plan !== "FREE" && (current.expiresAt === null || current.expiresAt > now);
 
       if (payment.plan === "CENTER") {
         const granted = await grantCenterSeats(tx, payment, now);
-        const seats = payment.seats ?? 0;
         // Plan PERSONNEL du propriétaire : un Student/Premium encore actif est
         // conservé tel quel (les sièges ont leur propre validité). Sinon il
         // devient CENTER jusqu'à la fin de la dernière période de sièges payée.
-        const keepPersonal = currentActive && current.plan !== "CENTER";
+        const keepPersonal = openEnded || (currentActive && current.plan !== "CENTER");
         const endOfSeats = granted.expiresAt?.getTime() ?? 0;
         await tx.user.update({
           where: { id: payment.userId },
@@ -88,10 +92,19 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
                 }),
             // Un SUPER_ADMIN qui achète des sièges reste SUPER_ADMIN.
             ...(user?.role === "SUPER_ADMIN" ? {} : { role: "CENTER_ADMIN" as const }),
-            credits: {
-              increment: creditsForGrant(payment.centerMode, seats, payment.periodDays),
-            },
+            // Crédits versés maintenant seulement si la période a déjà commencé ;
+            // un renouvellement payé d'avance est crédité à sa date de début
+            // (settleDueSeatCredits, lib/center-seats.ts).
+            credits: { increment: granted.creditsNow },
           },
+        });
+        return true;
+      }
+
+      if (openEnded) {
+        await tx.user.update({
+          where: { id: payment.userId },
+          data: { credits: { increment: creditsForPlan(payment.plan) } },
         });
         return true;
       }
@@ -167,7 +180,7 @@ async function grantCenterSeats(
     periodDays: number | null;
   },
   now: number,
-): Promise<{ expiresAt: Date | null }> {
+): Promise<{ expiresAt: Date | null; creditsNow: number }> {
   const center =
     (await tx.center.findUnique({ where: { ownerId: payment.userId } })) ??
     (await tx.center.create({
@@ -178,7 +191,7 @@ async function grantCenterSeats(
       },
     }));
   const seats = payment.seats ?? 0;
-  if (seats <= 0) return { expiresAt: null };
+  if (seats <= 0) return { expiresAt: null, creditsNow: 0 };
 
   // Verrou de ligne du centre : deux paiements simultanés s'enchaînent au
   // lieu de se chevaucher (le second voit la dotation du premier).
@@ -189,6 +202,11 @@ async function grantCenterSeats(
     state: await seatPeriodState(tx, center.id, new Date(now)),
     now: new Date(now),
   });
+  // Crédits : au début de la période (règle validée). Période déjà commencée
+  // (nouveau, ajout) = versés tout de suite ; renouvellement payé d'avance =
+  // versés quand sa date de début arrive.
+  const credits = creditsForGrant(payment.centerMode, seats, payment.periodDays);
+  const startedAlready = window.startsAt.getTime() <= now;
   await tx.centerSeatGrant.create({
     data: {
       centerId: center.id,
@@ -196,9 +214,11 @@ async function grantCenterSeats(
       startsAt: window.startsAt,
       expiresAt: window.expiresAt,
       paymentRef: payment.providerRef,
+      credits,
+      creditedAt: startedAlready ? new Date(now) : null,
     },
   });
-  return { expiresAt: window.expiresAt };
+  return { expiresAt: window.expiresAt, creditsNow: startedAlready ? credits : 0 };
 }
 
 /**

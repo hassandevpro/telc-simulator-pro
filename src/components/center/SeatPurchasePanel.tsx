@@ -24,9 +24,15 @@ interface Quote {
   expiresAt?: number;
   billedDays?: number;
   credits?: number;
+  creditsAt?: number;
+  creditsDeferred?: boolean;
+  blocked?: boolean;
+  message?: string;
 }
 
-const date = (ms: number) => new Date(ms).toLocaleDateString("de-DE");
+/** Échéances « sans échéance » (droits historiques, 2099) : affichées telles quelles. */
+const date = (ms: number) =>
+  new Date(ms).getUTCFullYear() >= 2099 ? "unbefristet" : new Date(ms).toLocaleDateString("de-DE");
 const xaf = (value: number) => `${value.toLocaleString("fr-FR")} FCFA`;
 const eur = (value: number) => `${value.toFixed(2).replace(".", ",")} €`;
 
@@ -64,7 +70,8 @@ export function SeatPurchasePanel({ initialSeats = 10 }: { initialSeats?: number
   const quote = loaded.key === key ? loaded.quote : null;
   const waiting = loaded.key !== key;
   const mustChoose = quote?.needsMode === true && mode === null;
-  const canPay = Boolean(quote) && !quote?.needsMode && busy === null && !waiting;
+  const canPay =
+    Boolean(quote) && !quote?.needsMode && !quote?.blocked && busy === null && !waiting;
 
   const buy = async (provider: Provider) => {
     setBusy(provider);
@@ -150,7 +157,13 @@ export function SeatPurchasePanel({ initialSeats = 10 }: { initialSeats?: number
         </fieldset>
       ) : null}
 
-      {quote && !quote.needsMode ? (
+      {quote?.blocked ? (
+        <p className="rounded-sm border border-border bg-surface p-2.5 text-[12px] text-muted">
+          {quote.message}
+        </p>
+      ) : null}
+
+      {quote && !quote.needsMode && !quote.blocked ? (
         <div className="rounded-sm border border-border bg-surface p-2.5 text-[12px]">
           <p className="text-[14px] font-semibold tabular-nums">
             {xaf(quote.amountXaf!)}{" "}
@@ -163,7 +176,10 @@ export function SeatPurchasePanel({ initialSeats = 10 }: { initialSeats?: number
                 ? `${seats} Plätze vom ${date(quote.startsAt!)} bis ${date(quote.expiresAt!)} (30 Tage).`
                 : `${seats} Plätze für 30 Tage ab heute (bis ${date(quote.expiresAt!)}).`}
             {" "}
-            {quote.credits} Credits werden dem Pool gutgeschrieben.
+            {quote.credits} Credits werden dem Pool{" "}
+            {quote.creditsDeferred && quote.creditsAt
+              ? `zu Beginn der neuen Periode (${date(quote.creditsAt)}) gutgeschrieben.`
+              : "sofort gutgeschrieben."}
           </p>
         </div>
       ) : null}

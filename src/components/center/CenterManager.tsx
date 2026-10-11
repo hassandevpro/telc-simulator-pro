@@ -17,6 +17,9 @@ interface CenterData {
   seats: number;
   /** Fin de validité des sièges actifs (ms epoch), null sans siège actif. */
   seatsValidUntil: number | null;
+  /** Crédits de renouvellements payés d'avance, versés à la date indiquée. */
+  pendingCredits: number;
+  pendingCreditsAt: number | null;
   memberCount: number;
 }
 
@@ -138,7 +141,9 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
             {" · "}
             {seatsFree} frei
             {center.seatsValidUntil
-              ? ` · gültig bis ${new Date(center.seatsValidUntil).toLocaleDateString("de-DE")}`
+              ? new Date(center.seatsValidUntil).getUTCFullYear() >= 2099
+                ? " · unbefristet"
+                : ` · gültig bis ${new Date(center.seatsValidUntil).toLocaleDateString("de-DE")}`
               : " · keine aktiven Plätze"}
           </span>
         </div>
@@ -172,6 +177,14 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
             Schlüssel: <span className="font-mono">{center.inviteCode}</span>
           </p>
         </div>
+
+        {center.pendingCredits > 0 && center.pendingCreditsAt ? (
+          <p className="mt-2 text-[12px] text-muted">
+            {center.pendingCredits} Credits der bezahlten Verlängerung werden am{" "}
+            {new Date(center.pendingCreditsAt).toLocaleDateString("de-DE")}{" "}
+            gutgeschrieben.
+          </p>
+        ) : null}
 
         <div className="mt-4 max-w-sm border-t border-border pt-4">
           <p className="text-[13px] font-medium">Plätze kaufen (pro Studierende/n)</p>

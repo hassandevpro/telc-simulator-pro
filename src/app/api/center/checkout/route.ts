@@ -4,7 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CENTER_SEAT_PRICE } from "@/config/pricing";
-import { modeRequiredBody, prepareCenterPurchase } from "@/lib/center-purchase";
+import { prepareCenterPurchase, quoteErrorResponse } from "@/lib/center-purchase";
 import { createFlutterwavePayment } from "@/lib/payments/flutterwave";
 import { stripe } from "@/lib/payments/stripe";
 
@@ -53,7 +53,8 @@ export async function POST(request: Request) {
     currency,
   });
   if (!result.ok) {
-    return NextResponse.json(modeRequiredBody(result), { status: 409 });
+    const failure = quoteErrorResponse(result);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
   const { quote } = result;
   const periodDays = quote.mode === "ADD" ? quote.billedDays : null;

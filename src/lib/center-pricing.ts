@@ -52,7 +52,18 @@ export interface CenterQuote {
 
 export type QuoteResult =
   | { ok: true; quote: CenterQuote }
-  | { ok: false; code: "CENTER_MODE_REQUIRED"; activeEnd: Date; lastEnd: Date };
+  | { ok: false; code: "CENTER_MODE_REQUIRED"; activeEnd: Date; lastEnd: Date }
+  | { ok: false; code: "CENTER_OPEN_ENDED" };
+
+/**
+ * Année à partir de laquelle une échéance de sièges est « sans échéance »
+ * (droits historiques attribués sans date de fin, repris par la migration
+ * avec le 31/12/2099). Un prorata ou un renouvellement n'ont aucun sens sur
+ * une telle période : l'achat est refusé et renvoyé au support.
+ */
+export const OPEN_ENDED_YEAR = 2099;
+export const isOpenEnded = (date: Date | null | undefined): boolean =>
+  Boolean(date) && date!.getUTCFullYear() >= OPEN_ENDED_YEAR;
 
 function round(amount: number, currency: Currency): number {
   return currency === "XAF" ? Math.round(amount) : Math.round(amount * 100) / 100;
@@ -82,6 +93,11 @@ export function quoteCenterPurchase(input: {
   const activeEnd = state.activeEnd && state.activeEnd.getTime() > nowMs ? state.activeEnd : null;
   const lastEnd =
     state.lastEnd && state.lastEnd.getTime() > nowMs ? state.lastEnd : null;
+
+  // Droits historiques sans échéance : ni renouvellement ni prorata possibles.
+  if (isOpenEnded(activeEnd) || isOpenEnded(lastEnd)) {
+    return { ok: false, code: "CENTER_OPEN_ENDED" };
+  }
 
   const base = (mode: CenterMode, startsAt: Date, billedDays: number, amount: number, credits: number): QuoteResult => ({
     ok: true,
