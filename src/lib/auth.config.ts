@@ -1,7 +1,7 @@
 import type { NextAuthConfig } from "next-auth";
 
 /**
- * Configuration NextAuth edge-safe : consommée par le middleware
+ * Configuration NextAuth edge-safe : consommée par le proxy (ex-middleware)
  * (aucun import Prisma/Node ici). Les providers complets vivent
  * dans src/lib/auth.ts.
  */
@@ -18,8 +18,8 @@ export const authConfig = {
   providers: [],
   callbacks: {
     /**
-     * Appelé par le middleware pour chaque route protégée
-     * (voir src/middleware.ts). Redirige vers /login si non connecté.
+     * Appelé par le proxy pour chaque route protégée
+     * (voir src/proxy.ts). Redirige vers /login si non connecté.
      */
     authorized({ auth }) {
       return !!auth?.user;
