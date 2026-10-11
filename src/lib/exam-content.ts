@@ -6,6 +6,7 @@ import type {
   ExamContentBundle,
   PartContent,
 } from "@/types/question-content";
+import { toCandidateBundle } from "./candidate-content";
 import { DEMO_B2_ANSWER_KEYS, DEMO_B2_CONTENT } from "./demo-b2-content";
 
 /**
@@ -16,6 +17,12 @@ import { DEMO_B2_ANSWER_KEYS, DEMO_B2_CONTENT } from "./demo-b2-content";
  * fixture de démonstration en repli ("demo-b2", ou base indisponible).
  * Le bundle servi aux pages n'inclut JAMAIS answerKey ; seules les
  * fonctions de scoring (serveur) y accèdent.
+ *
+ * TOUT ce que ce module renvoie à une page candidat passe par la projection
+ * en liste blanche de lib/candidate-content.ts : ni la transcription Hören
+ * (`script`), ni l'emplacement d'un audio, ni aucun champ inconnu n'atteint
+ * le navigateur. Le contenu COMPLET (admin) se lit ailleurs, derrière
+ * requireAdmin (api/admin/exams/…/parts/…).
  */
 
 /* ------------------------- Lecture depuis la base ------------------------- */
@@ -39,9 +46,10 @@ function buildBundleFromDb(
   title: string,
   level: Level,
   rows: DbPartRow[],
-): ExamContentBundle {
+): { bundle: ExamContentBundle; audioParts: Set<string> } {
   const structure = getStructureForLevel(level);
   const parts: Record<string, PartContent> = {};
+  const audioParts = new Set<string>();
 
   for (const row of rows) {
     const structPart = structure.schriftlichePruefung.sections
@@ -53,6 +61,8 @@ function buildBundleFromDb(
       ...((row.sharedContent as object | null) ?? {}),
       ...(row.audioUrl ? { audioUrl: row.audioUrl } : {}),
     };
+
+    if (row.audioUrl) audioParts.add(`${row.sectionId}/${row.partId}`);
 
     parts[`${row.sectionId}/${row.partId}`] = {
       type: structPart.questionType,
@@ -67,12 +77,12 @@ function buildBundleFromDb(
     } as PartContent;
   }
 
-  return { examId, title, level, parts };
+  return { bundle: { examId, title, level, parts }, audioParts };
 }
 
 async function getExamContentFromDb(
   examId: string,
-): Promise<ExamContentBundle | null> {
+): Promise<{ bundle: ExamContentBundle; audioParts: Set<string> } | null> {
   try {
     const exam = await db.exam.findUnique({
       where: { id: examId },
@@ -133,12 +143,23 @@ export async function resolveDbExamId(examId: string): Promise<string> {
   return examId;
 }
 
+/**
+ * Contenu d'un examen tel que servi à un CANDIDAT (projection en liste
+ * blanche : ni corrigé, ni transcription, ni emplacement audio).
+ */
 export async function getExamContent(
   examId: string,
 ): Promise<ExamContentBundle | null> {
   const fromDb = await getExamContentFromDb(await resolveDbExamId(examId));
-  if (fromDb) return fromDb;
-  if (examId === DEMO_B2_CONTENT.examId) return DEMO_B2_CONTENT;
+  if (fromDb) return toCandidateBundle(fromDb.bundle, fromDb.audioParts);
+  if (examId === DEMO_B2_CONTENT.examId) {
+    const audioParts = new Set(
+      Object.entries(DEMO_B2_CONTENT.parts)
+        .filter(([, part]) => Boolean(part.shared.audioUrl))
+        .map(([key]) => key),
+    );
+    return toCandidateBundle(DEMO_B2_CONTENT, audioParts);
+  }
   return null;
 }
 
@@ -149,6 +170,38 @@ export async function getPartContent(
 ): Promise<PartContent | null> {
   const bundle = await getExamContent(examId);
   return bundle?.parts[`${sectionId}/${partId}`] ?? null;
+}
+
+/**
+ * Emplacement de l'audio d'un Teil — SERVEUR UNIQUEMENT, jamais transmis tel
+ * quel à un candidat. Base d'abord (examen importé ou créé), fixture de la
+ * démo en repli.
+ */
+export async function getPartAudioLocation(
+  examId: string,
+  sectionId: SectionId,
+  partId: string,
+): Promise<{ url: string | null }> {
+  try {
+    const part = await db.examPart.findUnique({
+      where: {
+        examId_sectionId_partId: {
+          examId: await resolveDbExamId(examId),
+          sectionId,
+          partId,
+        },
+      },
+      select: { audioUrl: true },
+    });
+    if (part) return { url: part.audioUrl };
+  } catch {
+    // Base indisponible : repli fixture.
+  }
+  if (examId === DEMO_B2_CONTENT.examId) {
+    const shared = DEMO_B2_CONTENT.parts[`${sectionId}/${partId}`]?.shared;
+    return { url: shared?.audioUrl ?? null };
+  }
+  return { url: null };
 }
 
 /**

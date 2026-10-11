@@ -16,13 +16,20 @@ export interface HoerenScriptContent {
 export interface SharedBase {
   /** Arbeitsanweisung officielle affichée en tête du Teil. */
   instructions?: string;
-  /** Audio du Teil (Hören) — miroir de ExamPart.audioUrl en base. */
-  audioUrl?: string;
   /**
-   * Script audio (Hören) : la transcription à faire lire/enregistrer. Généré
-   * en même temps que les questions et conservé même sans synthèse
-   * ElevenLabs, pour produire l'audio manuellement puis l'uploader.
+   * Un audio est rattaché à ce Teil (Hören). SEULE information audio servie
+   * à un candidat : l'URL signée s'obtient à la demande auprès de
+   * /api/sessions/{id}/audio/… (voir lib/candidate-content.ts).
    */
+  hasAudio?: boolean;
+  /**
+   * CONTENU STOCKÉ / ADMIN UNIQUEMENT — jamais présent dans ce que reçoit un
+   * candidat (la projection candidat les retire) :
+   * `audioUrl` = emplacement de l'audio (ancienne URL publique ou chemin
+   * statique de la démo) ; `script` = transcription à faire lire/enregistrer,
+   * conservée même sans synthèse ElevenLabs.
+   */
+  audioUrl?: string;
   script?: HoerenScriptContent;
 }
 

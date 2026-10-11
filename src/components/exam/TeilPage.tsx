@@ -8,7 +8,7 @@ import {
   getSection,
 } from "@/config/exam-structure";
 import { requireSessionExam } from "@/lib/exam-access";
-import { getPartContent } from "@/lib/exam-content";
+import { getPartAudioLocation, getPartContent } from "@/lib/exam-content";
 import type { SectionId } from "@/types/exam";
 
 export interface TeilPageProps {
@@ -40,6 +40,12 @@ export async function TeilPage({ sessionId, sectionId, teil }: TeilPageProps) {
   const content = await getPartContent(access.examId, sectionId, teil);
   if (!content || content.type !== part.questionType) notFound();
 
+  // Emplacement lu côté serveur, séparément du contenu : le contenu candidat
+  // ne porte que `hasAudio` (cf. lib/candidate-content.ts).
+  const audio = content.shared.hasAudio
+    ? await getPartAudioLocation(access.examId, sectionId, teil)
+    : { url: null };
+
   const startNumber = getItemStartNumber(structure, sectionId, teil);
   const endNumber = startNumber + part.itemCount - 1;
 
@@ -53,11 +59,11 @@ export async function TeilPage({ sessionId, sectionId, teil }: TeilPageProps) {
           Aufgaben {startNumber}–{endNumber}
         </p>
       </header>
-      {content.shared.audioUrl ? (
+      {content.shared.hasAudio && audio.url ? (
         <AudioPlayer
           sessionId={sessionId}
           audioId={`${sectionId}/${teil}`}
-          src={content.shared.audioUrl}
+          src={audio.url}
         />
       ) : null}
       <QuestionRenderer
