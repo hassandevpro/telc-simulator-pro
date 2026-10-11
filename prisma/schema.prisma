@@ -48,36 +48,44 @@ enum SessionStatus {
 }
 
 model User {
-  id            String        @id @default(cuid())
-  email         String        @unique
+  id              String           @id @default(cuid())
+  email           String           @unique
   // Null pour les comptes créés via Google (OAuth) : pas de mot de passe local.
-  passwordHash  String?
-  name          String
+  passwordHash    String?
+  name            String
   // Numéro de téléphone (WhatsApp) saisi à l'inscription — sert au paiement
   // et au contact. Null pour les comptes Google tant qu'il n'est pas renseigné.
-  phone         String?
-  role          Role          @default(STUDENT)
-  plan          Plan          @default(FREE)
+  phone           String?
+  role            Role             @default(STUDENT)
+  plan            Plan             @default(FREE)
   // Date de vérification de l'e-mail — null tant que non vérifié (la
   // connexion est refusée dans ce cas).
-  emailVerified DateTime?
+  emailVerified   DateTime?
+  // COMMENT l'adresse a été prouvée : "LINK" (lien e-mail consommé) ou
+  // "GOOGLE" (e-mail vérifié par Google). Null = jamais prouvée — y compris
+  // les comptes historiques dont `emailVerified` était posé d'office à
+  // l'inscription. Seule cette colonne autorise une liaison Google.
+  emailVerifiedBy String?
   // Fin de validité du plan payant (abonnement) — null pour FREE.
-  planExpiresAt DateTime?
+  planExpiresAt   DateTime?
   // Crédits de passage d'examen (anti-partage). 1 crédit = 1 examen, débité
   // au démarrage du chrono. Rechargés à chaque paiement (config/credits.ts).
   // Pour un étudiant de centre, le pool consommé est celui du propriétaire.
-  credits       Int           @default(2)
+  credits         Int              @default(2)
   // Rattachement à un centre de langue en tant qu'ÉTUDIANT membre.
-  centerId      String?
-  center        Center?       @relation("CenterMembers", fields: [centerId], references: [id])
+  centerId        String?
+  center          Center?          @relation("CenterMembers", fields: [centerId], references: [id])
+  // Date d'adhésion au centre : départage les membres quand les sièges
+  // actifs sont moins nombreux que les membres (les plus anciens d'abord).
+  centerJoinedAt  DateTime?
   // Centre géré par cet utilisateur (rôle CENTER_ADMIN) — au plus un.
-  ownedCenter   Center?       @relation("CenterOwner")
-  sessions      ExamSession[]
-  payments      Payment[]
+  ownedCenter     Center?          @relation("CenterOwner")
+  sessions        ExamSession[]
+  payments        Payment[]
   // Progression dans la Vorbereitung (contenu statique, progression en base).
-  lessonProgress LessonProgress[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  lessonProgress  LessonProgress[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([centerId])
 }
@@ -88,16 +96,43 @@ model User {
  * (la « clé »). Le nombre de places (`seats`) est acheté au quota d'élèves.
  */
 model Center {
-  id         String   @id @default(cuid())
+  id         String            @id @default(cuid())
   name       String
-  ownerId    String   @unique
-  owner      User     @relation("CenterOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId    String            @unique
+  owner      User              @relation("CenterOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   // Clé d'invitation (partagée via le lien /join/<inviteCode>).
-  inviteCode String   @unique
-  // Quota d'étudiants acheté.
-  seats      Int      @default(0)
-  members    User[]   @relation("CenterMembers")
-  createdAt  DateTime @default(now())
+  inviteCode String            @unique
+  // HISTORIQUE — ancien compteur cumulatif, plus lu par le code. Les sièges
+  // actifs sont la somme des CenterSeatGrant non expirés.
+  seats      Int               @default(0)
+  members    User[]            @relation("CenterMembers")
+  seatGrants CenterSeatGrant[]
+  createdAt  DateTime          @default(now())
+}
+
+/**
+ * Sièges achetés pour une PÉRIODE donnée. Un siège n'est actif qu'entre
+ * `startsAt` et `expiresAt` : un renouvellement avec moins de sièges ne
+ * prolonge donc jamais les sièges d'un achat précédent.
+ */
+model CenterSeatGrant {
+  id         String    @id @default(cuid())
+  centerId   String
+  center     Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  seats      Int
+  startsAt   DateTime
+  expiresAt  DateTime
+  // Paiement à l'origine de la dotation (null pour la reprise historique).
+  paymentRef String?   @unique
+  // Crédits attachés à la dotation et leur date de versement : ils sont
+  // versés au pool du centre quand la période COMMENCE (renouvellement
+  // payé d'avance = crédits à la date de début, pas au paiement).
+  // creditedAt NULL = pas encore versés.
+  credits    Int       @default(0)
+  creditedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([centerId, expiresAt])
 }
 
 /**
@@ -146,6 +181,15 @@ model Payment {
   currency     String
   // Places achetées (paiement CENTER par quota) — null pour Student/Premium.
   seats        Int?
+  // Nature de l'achat de sièges, fixée à l'initiation (lib/center-pricing.ts) :
+  // "NEW" (aucun siège actif), "RENEW" (période suivante, à la fin de la
+  // période payée) ou "ADD" (sièges supplémentaires jusqu'à cette échéance,
+  // au prorata). Null = paiement antérieur à cette règle : ancien traitement
+  // (30 jours à partir de l'activation).
+  centerMode   String?
+  // ADD uniquement : jours facturés (repli si la période a expiré entre
+  // l'initiation et le paiement : les sièges durent alors ce qui a été payé).
+  periodDays   Int?
   status       PaymentStatus   @default(PENDING)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -175,8 +219,14 @@ model ExamPart {
   // annonces A–L, texte à trous… Forme validée par Zod selon le type
   // (src/types/question-content.ts).
   sharedContent Json?
-  // Hören uniquement.
+  // Hören uniquement. HISTORIQUE : ancienne URL publique du fichier (ou chemin
+  // statique de la démo). Jamais modifié par la migration de sécurité : c'est
+  // ce qui la rend réversible. Plus lu quand `audioPath` est renseigné.
   audioUrl      String?
+  // Hören uniquement : chemin du fichier DANS le bucket privé « audio »
+  // (ex. « 1760000000-piste.mp3 »). Jamais exposé au candidat : il obtient une
+  // URL signée de courte durée via /api/sessions/{id}/audio/…
+  audioPath     String?
   questions     Question[]
 
   @@unique([examId, sectionId, partId])
@@ -205,21 +255,33 @@ model Question {
 }
 
 model ExamSession {
-  id          String        @id @default(cuid())
-  userId      String
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  examId      String
-  exam        Exam          @relation(fields: [examId], references: [id])
-  status      SessionStatus @default(AUDIO_CHECK)
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId          String
+  exam            Exam          @relation(fields: [examId], references: [id])
+  status          SessionStatus @default(AUDIO_CHECK)
   // Ancre du timer — posée une seule fois, JAMAIS modifiée ensuite.
   // Fondement du timer inviolable (ARCHITECTURE.md §6).
-  startedAt   DateTime?
-  submittedAt DateTime?
+  startedAt       DateTime?
+  submittedAt     DateTime?
   // Ids des audios déjà consommés (marqués dès `play`).
-  audioPlayed Json          @default("[]")
-  answers     Answer[]
-  result      Result?
-  createdAt   DateTime      @default(now())
+  audioPlayed     Json          @default("[]")
+  // Nombre d'URL signées émises par audio ({ "hoeren/teil-1": 1 }) : borne les
+  // émissions côté serveur (lib/audio-access.ts), indépendamment du navigateur.
+  audioIssued     Json          @default("{}")
+  // Sort du crédit de passage, posé au DÉMARRAGE (dans la même transaction
+  // que startedAt) : "CHARGED" (1 crédit débité), "EXEMPT" (rejeu d'un
+  // examen déjà fait, SUPER_ADMIN). Null = session HISTORIQUE démarrée avant
+  // ce contrôle : l'ancien débit à la remise lui est appliqué.
+  creditStatus    String?
+  // Compte dont le crédit a été débité (propriétaire du centre ou candidat) :
+  // c'est lui qu'un remboursement manuel recrédite. Null = non débité, ou
+  // session antérieure à ce suivi (repli : le candidat).
+  creditAccountId String?
+  answers         Answer[]
+  result          Result?
+  createdAt       DateTime      @default(now())
 
   // Index présents en base et réellement utiles : aucune contrainte ne
   // couvre ces colonnes (sessions par candidat, sessions par examen).
@@ -259,7 +321,6 @@ model Result {
 
 /**
  * Progression dans la Vorbereitung (espace d'apprentissage).
- *
  * Le CONTENU des leçons est statique (src/content/vorbereitung) — la base ne
  * stocke que ce qui est propre à l'utilisateur. `lessonSlug` est donc une
  * simple chaîne, sans clé étrangère : le catalogue n'est pas en base.
@@ -267,20 +328,39 @@ model Result {
  * (repli LocalStorage côté client).
  */
 model LessonProgress {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Slug de la leçon dans src/content/vorbereitung — stable par contrat.
-  lessonSlug  String
+  lessonSlug String
   // Marquée comme lue par l'utilisateur.
-  completed   Boolean  @default(false)
+  completed  Boolean  @default(false)
   // Dernier résultat d'exercice : items corrects / items corrigibles.
-  score       Int?
-  maxScore    Int?
-  updatedAt   DateTime @updatedAt
-  createdAt   DateTime @default(now())
+  score      Int?
+  maxScore   Int?
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
 
   // Une seule ligne par (utilisateur, leçon) : l'enregistrement est un upsert.
   @@unique([userId, lessonSlug])
   @@index([userId])
+}
+
+/**
+ * Journal des ajustements MANUELS de crédits (remboursement d'un examen par
+ * un administrateur). Un seul remboursement par session (sessionId unique) :
+ * c'est aussi ce qui rend l'opération idempotente.
+ */
+model CreditAdjustment {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  // Compte recrédité.
+  accountId String
+  amount    Int
+  reason    String
+  // Administrateur qui a décidé le remboursement.
+  adminId   String
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
 }

@@ -1,5 +1,10 @@
 /**
- * F2 — Sécurisation de POST /api/sessions/score.
+ * F2 — POST /api/sessions/score, désormais en LECTURE SEULE.
+ *
+ * La correction a lieu UNE fois, à la remise (POST /api/sessions/{id}/submit,
+ * couvert par tests/int-sessions.test.ts sur PostgreSQL réel). Cette route ne
+ * fait que relire le résultat STOCKÉ, et refuse tant que la session n'est pas
+ * remise : ce n'est plus un oracle (corriger, changer une réponse, recorriger).
  *
  * Exécution :
  *   TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx \
@@ -71,24 +76,26 @@ function call(body: unknown): Promise<Response> {
   );
 }
 
-/** Session prête à être corrigée : une bonne réponse, une mauvaise → 5 pts. */
-function seedScorableSession(owner: string) {
+/** Résultat stocké par le serveur à la remise (sans aucune clé). */
+const STORED_SCORE = { objectivePoints: 5, writtenMaxPoints: 225, parts: [] };
+
+/** Session REMISE : statut SCORED et résultat calculé par le serveur. */
+function seedScoredSession(owner: string) {
   state.sessions.set("s1", {
     userId: owner,
-    examId: EXAM.id,
-    status: "SUBMITTED",
-    startedAt: new Date(Date.now() - 3_600_000),
-    exam: { level: "B2" },
-    answers: [
-      { questionId: "q1", value: "KEY_SECRET_ALPHA" }, // juste
-      { questionId: "q2", value: "mauvaise" }, // faux
-    ],
+    status: "SCORED",
+    result: { sectionScores: STORED_SCORE },
   });
 }
 
-test("requête ANONYME : 401 (l'oracle sur le corrigé est fermé)", async () => {
+/** Session démarrée, pas encore remise. */
+function seedOpenSession(owner: string, status = "IN_PROGRESS") {
+  state.sessions.set("s1", { userId: owner, status, result: null });
+}
+
+test("requête ANONYME : 401", async () => {
   state.authUserId = null;
-  seedScorableSession("u1");
+  seedScoredSession("u1");
   const response = await call({ sessionId: "s1" });
   assert.equal(response.status, 401);
 });
@@ -108,38 +115,32 @@ test("session inexistante : 404", async () => {
 
 test("session d'un AUTRE utilisateur : 404 (sans révéler son existence)", async () => {
   state.authUserId = "attaquant";
-  seedScorableSession("victime");
+  seedScoredSession("victime");
   const response = await call({ sessionId: "s1" });
   assert.equal(response.status, 404);
 });
 
-test("session pas encore commencée : 409", async () => {
-  state.authUserId = "u1";
-  state.sessions.set("s1", {
-    userId: "u1",
-    examId: EXAM.id,
-    status: "AUDIO_CHECK",
-    startedAt: null,
-    exam: { level: "B2" },
-    answers: [],
+for (const status of ["AUDIO_CHECK", "IN_PROGRESS", "EXPIRED", "SUBMITTED"]) {
+  test(`session ${status} (non remise) : 409, aucune correction`, async () => {
+    state.authUserId = "u1";
+    seedOpenSession("u1", status);
+    const response = await call({ sessionId: "s1" });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, "NOT_SUBMITTED");
   });
-  const response = await call({ sessionId: "s1" });
-  assert.equal(response.status, 409);
-});
+}
 
-test("utilisateur autorisé : 200 et score calculé sur les réponses EN BASE", async () => {
+test("session remise : 200, résultat STOCKÉ relu tel quel", async () => {
   state.authUserId = "u1";
-  seedScorableSession("u1");
+  seedScoredSession("u1");
   const response = await call({ sessionId: "s1" });
   assert.equal(response.status, 200);
-  const score = (await response.json()) as { objectivePoints: number };
-  assert.equal(score.objectivePoints, 5); // 1 bonne sur 2
+  assert.deepEqual(await response.json(), STORED_SCORE);
 });
 
-test("réponses envoyées par le CLIENT : totalement ignorées", async () => {
+test("réponses / examId envoyés par le CLIENT : totalement ignorés", async () => {
   state.authUserId = "u1";
-  seedScorableSession("u1");
-  // Le client prétend avoir tout bon, et vise un autre examen.
+  seedScoredSession("u1");
   const response = await call({
     sessionId: "s1",
     examId: "un-autre-examen",
@@ -152,10 +153,8 @@ test("réponses envoyées par le CLIENT : totalement ignorées", async () => {
 
 test("aucune clé de correction dans la réponse HTTP", async () => {
   state.authUserId = "u1";
-  seedScorableSession("u1");
-  const response = await call({ sessionId: "s1" });
-  const raw = await response.text();
+  seedScoredSession("u1");
+  const raw = await (await call({ sessionId: "s1" })).text();
   assert.ok(!raw.includes("KEY_SECRET"), "une clé de correction a fuité");
   assert.ok(!/"answerKey"/.test(raw));
-  assert.ok(!/"key"/.test(raw));
 });

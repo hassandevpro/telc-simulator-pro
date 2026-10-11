@@ -76,6 +76,11 @@ function setUser(id: string, plan: string, expiresInDays: number | null) {
   });
 }
 
+/**
+ * Par défaut : session TERMINÉE (démarrée il y a 3 h, SCORED). L'accès y
+ * dépend alors uniquement du plan — c'est ce que vérifient les cas F1.
+ * Une session non démarrée ne sert aucun contenu (cas dédié plus bas).
+ */
 function setSession(
   id: string,
   userId: string,
@@ -85,8 +90,12 @@ function setSession(
   state.sessions.set(id, {
     userId,
     examId,
-    startedAt: extra.startedAt ?? null,
-    status: extra.status ?? "AUDIO_CHECK",
+    startedAt:
+      extra.startedAt === undefined
+        ? new Date(Date.now() - 3 * 3_600_000)
+        : extra.startedAt,
+    status: extra.status ?? "SCORED",
+    exam: { level: "B2" },
   });
 }
 
@@ -153,6 +162,27 @@ test("cookie manipulé : aucun contournement — sans ligne en base, pas d'exame
   // Aucune session en base. Avant le correctif, le cookie telc-exam-<id>
   // fournissait l'examId ; désormais la seule source est ExamSession.
   assert.equal(await mod.requireSessionExam("session-forgee"), null);
+});
+
+test("session NON DÉMARRÉE : aucun contenu servi (crédit pas encore débité)", async () => {
+  reset();
+  state.authUserId = "u-paid";
+  setUser("u-paid", "PREMIUM", 30);
+  setSession("s1", "u-paid", "exam-paid", { startedAt: null, status: "AUDIO_CHECK" });
+  assert.deepEqual(await mod.requireSessionExamAccess("s1"), { kind: "not-started" });
+  // La variante des pages redirige vers le test casque (NEXT_REDIRECT).
+  await assert.rejects(() => mod.requireSessionExam("s1"), /NEXT_REDIRECT/);
+});
+
+test("épreuve en cours mais ÉCHÉANCE SERVEUR dépassée : plus d'exception, plan exigé", async () => {
+  reset();
+  state.authUserId = "u-exp";
+  setUser("u-exp", "STUDENT", -1);
+  setSession("s1", "u-exp", "exam-paid", {
+    startedAt: new Date(Date.now() - 3 * 3_600_000),
+    status: "IN_PROGRESS",
+  });
+  assert.equal(await mod.requireSessionExam("s1"), null);
 });
 
 test("épreuve EN COURS : l'accès est maintenu même sans droit courant", async () => {

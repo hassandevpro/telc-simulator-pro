@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { retryDelayMs, saveAnswersOnce } from "@/lib/autosave";
 import { sessionRepository } from "@/lib/repository";
 import { useExamSessionStore } from "@/stores/examSessionStore";
 
-export type AutosaveStatus = "idle" | "pending" | "saved" | "error";
+export type AutosaveStatus = "idle" | "pending" | "saved" | "error" | "locked";
 
 const DEBOUNCE_MS = 2000;
 
@@ -12,63 +13,65 @@ const DEBOUNCE_MS = 2000;
  * Écrit IMMÉDIATEMENT les réponses en attente vers le repository, sans
  * attendre le debounce. Utilisé par le filet pagehide/visibilitychange
  * et par la sauvegarde sur blur de l'éditeur Schreiben.
+ *
+ * Le drapeau « non sauvegardé » n'est rabaissé qu'APRÈS confirmation du
+ * serveur : un échec laisse les réponses en attente, l'autosave réessaiera.
  */
 export function flushAnswers(sessionId: string): void {
-  const state = useExamSessionStore.getState();
-  if (!state.hasUnsavedChanges) return;
-  // Écriture immédiate (best-effort) : en v2 c'est un appel réseau, on
-  // avale un éventuel rejet — l'autosave debouncé réécrira à la prochaine
-  // modification.
-  void sessionRepository
-    .saveAnswers(sessionId, state.answers)
-    .catch(() => undefined);
-  state.markSaved();
+  if (!useExamSessionStore.getState().hasUnsavedChanges) return;
+  void saveAnswersOnce(sessionId, sessionRepository, useExamSessionStore);
 }
 
 /**
  * Autosave (ARCHITECTURE.md §6) : 2 s après la dernière modification de
- * réponse, la carte des réponses part vers le SessionRepository, puis
- * markSaved() rabaisse le drapeau. L'hydratation ne déclenche rien
- * (le drapeau hasUnsavedChanges n'est levé que par setAnswer).
+ * réponse, la carte des réponses part vers le SessionRepository.
  *
- * L'état « pending » est DÉRIVÉ du drapeau hasUnsavedChanges — aucun
- * setState synchrone dans l'effet, seul le résultat de l'écriture
- * (saved/error) est stocké.
+ * Échec passager → indicateur « Speicherfehler », réponses conservées comme
+ * non sauvegardées, et nouvelle tentative automatique (2 s, 4 s, 8 s …
+ * 30 s). Refus définitif (épreuve close ou expirée) → « locked » : inutile
+ * de réessayer, le candidat doit passer à la remise.
  *
  * Filet de sécurité : au masquage de la page (pagehide/visibilitychange)
- * ou au démontage, les modifications en attente sont écrites immédiatement,
- * sans attendre le debounce — v1 LocalStorage : écriture synchrone fiable.
+ * ou au démontage, les modifications en attente sont envoyées immédiatement.
  *
  * Monté UNE fois, dans ExamShell. Retourne l'état pour l'indicateur
- * « Gespeichert » près du timer.
+ * près du timer.
  */
 export function useAutosave(sessionId: string): AutosaveStatus {
   const answers = useExamSessionStore((state) => state.answers);
   const hasUnsavedChanges = useExamSessionStore(
     (state) => state.hasUnsavedChanges,
   );
-  const markSaved = useExamSessionStore((state) => state.markSaved);
 
-  const [lastResult, setLastResult] = useState<"idle" | "saved" | "error">(
-    "idle",
-  );
+  const [lastResult, setLastResult] = useState<
+    "idle" | "saved" | "error" | "locked"
+  >("idle");
+  // Numéro de la tentative en échec : le relever reprogramme l'écriture.
+  const [attempt, setAttempt] = useState(0);
 
-  // Debounce : chaque modification repousse l'écriture de 2 s.
   useEffect(() => {
-    if (!hasUnsavedChanges) return;
+    if (!hasUnsavedChanges || lastResult === "locked") return;
 
+    const delay = attempt === 0 ? DEBOUNCE_MS : retryDelayMs(attempt);
     const timeout = window.setTimeout(async () => {
-      try {
-        await sessionRepository.saveAnswers(sessionId, answers);
-        markSaved();
+      const outcome = await saveAnswersOnce(
+        sessionId,
+        sessionRepository,
+        useExamSessionStore,
+      );
+      if (outcome.kind === "saved") {
+        setAttempt(0);
         setLastResult("saved");
-      } catch {
+      } else if (outcome.kind === "locked") {
+        setLastResult("locked");
+      } else {
         setLastResult("error");
+        setAttempt((value) => value + 1);
       }
-    }, DEBOUNCE_MS);
+    }, delay);
 
     return () => window.clearTimeout(timeout);
-  }, [answers, hasUnsavedChanges, sessionId, markSaved]);
+  }, [answers, hasUnsavedChanges, sessionId, attempt, lastResult]);
 
   // Flush immédiat si la page se masque avec des changements en attente.
   useEffect(() => {
@@ -83,5 +86,8 @@ export function useAutosave(sessionId: string): AutosaveStatus {
     };
   }, [sessionId]);
 
-  return hasUnsavedChanges ? "pending" : lastResult;
+  if (lastResult === "locked") return "locked";
+  if (hasUnsavedChanges) return lastResult === "error" ? "error" : "pending";
+  // Plus rien en attente (un flush a fini par passer) : l'erreur est levée.
+  return lastResult === "error" ? "saved" : lastResult;
 }

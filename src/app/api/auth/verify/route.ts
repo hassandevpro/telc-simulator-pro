@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   if (!email) return fail();
 
   await db.user
-    .update({ where: { email }, data: { emailVerified: new Date() } })
+    .update({ where: { email }, data: { emailVerified: new Date(), emailVerifiedBy: "LINK" } })
     .catch(() => undefined);
 
   return NextResponse.redirect(`${origin}/login?verify=success`);

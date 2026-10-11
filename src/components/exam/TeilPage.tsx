@@ -53,12 +53,10 @@ export async function TeilPage({ sessionId, sectionId, teil }: TeilPageProps) {
           Aufgaben {startNumber}–{endNumber}
         </p>
       </header>
-      {content.shared.audioUrl ? (
-        <AudioPlayer
-          sessionId={sessionId}
-          audioId={`${sectionId}/${teil}`}
-          src={content.shared.audioUrl}
-        />
+      {content.shared.hasAudio ? (
+        // Aucun emplacement audio dans la page : le lecteur demande une URL
+        // signée au serveur au moment de l'écoute (lib/audio-access.ts).
+        <AudioPlayer sessionId={sessionId} audioId={`${sectionId}/${teil}`} />
       ) : null}
       <QuestionRenderer
         sessionId={sessionId}

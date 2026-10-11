@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
 import { createFlutterwavePayment } from "@/lib/payments/flutterwave";
+import { guardPlanPurchase } from "@/lib/plan-purchase";
 
 const schema = z.object({ plan: z.enum(["STUDENT", "PREMIUM"]) });
 
@@ -28,6 +29,10 @@ export async function POST(request: Request) {
   if (!price) {
     return NextResponse.json({ error: "Ungültiger Plan." }, { status: 400 });
   }
+
+  // Gardes d'achat : plan sans échéance, Student pendant Premium (lib/plan-purchase.ts).
+  const blocked = await guardPlanPurchase(user.id, price.plan);
+  if (blocked) return blocked;
 
   const origin = new URL(request.url).origin;
   const txRef = `flw_${randomUUID()}`;

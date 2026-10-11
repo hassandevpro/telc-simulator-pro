@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
+import { isSafeAudioPath, isStaticAudioPath } from "@/lib/audio-path";
 import { db } from "@/lib/db";
 import { partContentPayloadSchema } from "@/lib/validators";
 import { Prisma } from "@/generated/prisma/client";
@@ -28,6 +29,10 @@ export async function GET(
   }
   return NextResponse.json({
     shared: part.sharedContent ?? {},
+    // Emplacement de l'audio (chemin dans le bucket privé, ou ancienne URL
+    // / chemin statique) : lecture ADMIN uniquement. L'écoute passe par
+    // /api/admin/audio/preview (URL signée).
+    audioPath: part.audioPath,
     audioUrl: part.audioUrl,
     questions: part.questions.map((question) => ({
       position: question.position,
@@ -71,13 +76,16 @@ export async function PUT(
   }
 
   const { type: _type, shared, questions } = parsed.data;
-  const { audioUrl, ...sharedContent } = shared;
+  // L'audio est géré par le PATCH ci-dessous, jamais par le JSON de contenu :
+  // un contenu collé ou édité ne peut ni détacher ni rediriger un audio.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { audioUrl: _ignoredAudioUrl, ...sharedContent } = shared;
 
   await db.$transaction([
     db.question.deleteMany({ where: { partId: part.id } }),
     db.examPart.update({
       where: { id: part.id },
-      data: { sharedContent, audioUrl: audioUrl ?? null },
+      data: { sharedContent },
     }),
     ...questions.map((question) =>
       db.question.create({
@@ -97,11 +105,15 @@ export async function PUT(
 }
 
 /**
- * Association audio du Teil — écriture CIBLÉE de `audioUrl` uniquement.
- * Découplée du PUT (qui recrée tout le contenu et exige un JSON complet
- * valide) : l'upload dans l'éditeur persiste l'audio en un seul geste,
- * sans dépendre de la validité du reste du Teil. Les questions ne sont
- * jamais touchées.
+ * Association audio du Teil — écriture CIBLÉE, découplée du PUT (qui recrée
+ * tout le contenu) : l'upload dans l'éditeur persiste l'audio en un geste.
+ *
+ * Corps : { audioPath: string | null } — chemin d'un fichier du bucket PRIVÉ
+ * (nom sûr, une seule composante). Aucune URL http(s) n'est acceptée : une
+ * URL publique permanente contournerait le contrôle d'accès. Seul un chemin
+ * statique de l'application ("/audio/demo/…", démo gratuite) reste permis via
+ * { audioUrl: "/…" }. Rattacher un audio efface l'ancienne audioUrl (la
+ * colonne n'est jamais lue quand audioPath existe).
  */
 export async function PATCH(
   request: Request,
@@ -115,14 +127,29 @@ export async function PATCH(
   const { examId, sectionId, partId } = await params;
 
   const body = (await request.json().catch(() => null)) as {
+    audioPath?: unknown;
     audioUrl?: unknown;
   } | null;
-  const audioUrl = body?.audioUrl;
-  if (audioUrl !== null && typeof audioUrl !== "string") {
-    return NextResponse.json(
-      { error: "audioUrl muss ein String oder null sein." },
-      { status: 400 },
-    );
+
+  let data: { audioPath: string | null; audioUrl: string | null };
+  if (body && "audioPath" in body) {
+    if (body.audioPath !== null && !isSafeAudioPath(body.audioPath)) {
+      return NextResponse.json(
+        { error: "audioPath muss ein Dateiname im Audio-Bucket oder null sein." },
+        { status: 400 },
+      );
+    }
+    data = { audioPath: body.audioPath, audioUrl: null };
+  } else if (body && "audioUrl" in body) {
+    if (body.audioUrl !== null && !isStaticAudioPath(body.audioUrl as string)) {
+      return NextResponse.json(
+        { error: "Nur interne Pfade (/…) sind erlaubt, keine öffentlichen URLs." },
+        { status: 400 },
+      );
+    }
+    data = { audioPath: null, audioUrl: (body.audioUrl as string | null) ?? null };
+  } else {
+    return NextResponse.json({ error: "audioPath fehlt." }, { status: 400 });
   }
 
   const part = await db.examPart.findUnique({
@@ -132,10 +159,6 @@ export async function PATCH(
     return NextResponse.json({ error: "Teil unbekannt." }, { status: 404 });
   }
 
-  await db.examPart.update({
-    where: { id: part.id },
-    data: { audioUrl: audioUrl ?? null },
-  });
-
-  return NextResponse.json({ ok: true, audioUrl: audioUrl ?? null });
+  await db.examPart.update({ where: { id: part.id }, data });
+  return NextResponse.json({ ok: true, ...data });
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card } from "@/components/ui";
+import { SeatPurchasePanel } from "./SeatPurchasePanel";
 
 interface Member {
   id: string;
@@ -14,6 +15,11 @@ interface CenterData {
   name: string;
   inviteCode: string;
   seats: number;
+  /** Fin de validité des sièges actifs (ms epoch), null sans siège actif. */
+  seatsValidUntil: number | null;
+  /** Crédits de renouvellements payés d'avance, versés à la date indiquée. */
+  pendingCredits: number;
+  pendingCreditsAt: number | null;
   memberCount: number;
 }
 
@@ -28,7 +34,6 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [seats, setSeats] = useState(10);
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -80,26 +85,6 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
     await fetch(`/api/center/members/${userId}`, { method: "DELETE" });
     await load();
     setBusy(false);
-  };
-
-  const buySeats = async (provider: "stripe" | "flutterwave") => {
-    setBusy(true);
-    setError(null);
-    const response = await fetch("/api/center/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, seats }),
-    });
-    const data = (await response.json().catch(() => null)) as {
-      url?: string;
-      error?: string;
-    } | null;
-    if (!response.ok || !data?.url) {
-      setError(data?.error ?? "Zahlung nicht möglich.");
-      setBusy(false);
-      return;
-    }
-    window.location.href = data.url;
   };
 
   if (!loaded) {
@@ -155,6 +140,11 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
             {center.memberCount} / {center.seats} Plätze belegt
             {" · "}
             {seatsFree} frei
+            {center.seatsValidUntil
+              ? new Date(center.seatsValidUntil).getUTCFullYear() >= 2099
+                ? " · unbefristet"
+                : ` · gültig bis ${new Date(center.seatsValidUntil).toLocaleDateString("de-DE")}`
+              : " · keine aktiven Plätze"}
           </span>
         </div>
 
@@ -188,39 +178,19 @@ export function CenterManager({ paymentSuccess }: { paymentSuccess: boolean }) {
           </p>
         </div>
 
-        <div className="mt-4 border-t border-border pt-4">
-          <p className="text-[13px] font-medium">Plätze kaufen (pro Studierende/n)</p>
-          <div className="mt-2 flex flex-wrap items-end gap-2">
-            <div>
-              <label htmlFor="seats" className="text-[12px] text-muted">
-                Anzahl Plätze
-              </label>
-              <input
-                id="seats"
-                type="number"
-                min={1}
-                max={500}
-                value={seats}
-                onChange={(event) =>
-                  setSeats(Math.max(1, Number(event.target.value) || 1))
-                }
-                className="mt-1 w-24 border border-border bg-background px-2 py-1.5 text-[13px] rounded-sm"
-              />
-            </div>
-            <Button variant="primary" disabled={busy} onClick={() => void buySeats("stripe")}>
-              Mit Karte
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void buySeats("flutterwave")}
-            >
-              Mobile Money / Afrika
-            </Button>
-          </div>
-          <p className="mt-1 text-[12px] text-muted">
-            Der Kauf setzt das Kontingent auf die gewählte Anzahl (30 Tage).
+        {center.pendingCredits > 0 && center.pendingCreditsAt ? (
+          <p className="mt-2 text-[12px] text-muted">
+            {center.pendingCredits} Credits der bezahlten Verlängerung werden am{" "}
+            {new Date(center.pendingCreditsAt).toLocaleDateString("de-DE")}{" "}
+            gutgeschrieben.
           </p>
+        ) : null}
+
+        <div className="mt-4 max-w-sm border-t border-border pt-4">
+          <p className="text-[13px] font-medium">Plätze kaufen (pro Studierende/n)</p>
+          <div className="mt-2">
+            <SeatPurchasePanel initialSeats={Math.max(1, center.seats || 10)} />
+          </div>
         </div>
 
         {error ? <p className="mt-3 text-[12px] text-danger">{error}</p> : null}

@@ -44,6 +44,8 @@ interface FakeUser {
 const payments = new Map<string, FakePayment>();
 const users = new Map<string, FakeUser>();
 const centers = new Map<string, { id: string; ownerId: string; seats: number }>();
+/** Dotations de sièges datées (CenterSeatGrant). */
+const grants: { centerId: string; seats: number; paymentRef: string }[] = [];
 
 const tx = {
   payment: {
@@ -110,11 +112,26 @@ const tx = {
       if (data.seats?.increment) center.seats += data.seats.increment;
       return center;
     },
-    create: async ({ data }: { data: { ownerId: string; seats: number } }) => {
+    create: async ({ data }: { data: { ownerId: string; seats?: number } }) => {
       await tick();
-      const center = { id: `c-${data.ownerId}`, ownerId: data.ownerId, seats: data.seats };
+      const center = { id: `c-${data.ownerId}`, ownerId: data.ownerId, seats: data.seats ?? 0 };
       centers.set(center.id, center);
       return center;
+    },
+  },
+  // Verrou de ligne du centre : sérialisation réelle prouvée sur PostgreSQL
+  // (tests/int-commercial.test.ts) ; ce double n'en a pas besoin.
+  $queryRaw: async () => [],
+  centerSeatGrant: {
+    aggregate: async () => ({ _max: { expiresAt: null } }),
+    create: async ({
+      data,
+    }: {
+      data: { centerId: string; seats: number; paymentRef: string };
+    }) => {
+      await tick();
+      grants.push({ centerId: data.centerId, seats: data.seats, paymentRef: data.paymentRef });
+      return data;
     },
   },
 };
@@ -140,6 +157,7 @@ beforeEach(() => {
   payments.clear();
   users.clear();
   centers.clear();
+  grants.length = 0;
   users.set("u1", {
     id: "u1",
     plan: "FREE",
@@ -211,7 +229,9 @@ test("CENTER concurrent : les sieges ne sont credites qu'une fois", async () => 
   await Promise.all([activatePlanByRef("ref-c"), activatePlanByRef("ref-c")]);
 
   const center = [...centers.values()].find((c) => c.ownerId === "u1")!;
-  assert.equal(center.seats, 10, "sieges doubles");
+  assert.equal(grants.length, 1, "dotation de sieges doublee");
+  assert.equal(grants[0].seats, 10);
+  assert.equal(grants[0].centerId, center.id);
   // 2 (initial) + 0 (CENTER n'a pas de dotation directe) + 10 x 15 par siege
   assert.equal(users.get("u1")!.credits, 2 + 10 * 15);
   assert.equal(users.get("u1")!.role, "CENTER_ADMIN");

@@ -1,4 +1,6 @@
 import { Card } from "@/components/ui";
+import { notFound } from "next/navigation";
+import { requireAdmin } from "@/lib/admin-guard";
 import { db } from "@/lib/db";
 
 /**
@@ -6,6 +8,9 @@ import { db } from "@/lib/db";
  * de sessions candidates arrivent avec la persistance v2.
  */
 export default async function AdminHomePage() {
+  // Défense en profondeur : la page lit la base, elle vérifie elle-même le
+  // rôle (en base) au lieu de se fier seulement au layout.
+  if (!(await requireAdmin())) notFound();
   let stats: {
     users: number;
     exams: number;

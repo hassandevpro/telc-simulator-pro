@@ -27,9 +27,22 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+/**
+ * Les tests d'intégration (tests/int-*.test.ts) partagent UNE base de test
+ * qu'ils vident entre deux cas : exécutés en parallèle, ils s'effaceraient
+ * mutuellement leurs données. Base de test active → fichiers en série.
+ */
+const serial = process.env.TEST_DATABASE_URL ? ["--test-concurrency=1"] : [];
+if (!process.env.TEST_DATABASE_URL) {
+  console.warn(
+    "[tests] TEST_DATABASE_URL absente : les tests d'intégration PostgreSQL " +
+      "(tests/int-*.test.ts) seront marqués SKIP. Voir tests/helpers/pg.ts.",
+  );
+}
+
 const result = spawnSync(
   process.execPath,
-  ["--import", "tsx", "--experimental-test-module-mocks", "--test", ...files],
+  ["--import", "tsx", "--experimental-test-module-mocks", ...serial, "--test", ...files],
   {
     cwd: root,
     stdio: "inherit",

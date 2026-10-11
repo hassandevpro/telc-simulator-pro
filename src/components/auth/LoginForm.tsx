@@ -29,6 +29,7 @@ export function LoginForm() {
   const [resendInfo, setResendInfo] = useState<string | null>(null);
 
   const verifyState = searchParams.get("verify");
+  const loginError = searchParams.get("error");
 
   const {
     register,
@@ -79,6 +80,20 @@ export function LoginForm() {
       {verifyState === "success" ? (
         <p className="mt-3 rounded-sm border border-border bg-surface px-3 py-2 text-[12px] text-foreground">
           E-Mail bestätigt. Sie können sich jetzt anmelden.
+        </p>
+      ) : null}
+      {loginError === "ACCOUNT_UNVERIFIED" ? (
+        <p className="mt-3 rounded-sm border border-danger px-3 py-2 text-[12px] text-danger">
+          Für diese E-Mail-Adresse existiert bereits ein Konto mit Passwort,
+          dessen Adresse noch nicht bestätigt ist. Melden Sie sich mit Ihrem
+          Passwort an und bestätigen Sie Ihre E-Mail-Adresse (Link unten) —
+          danach ist auch „Mit Google“ möglich.
+        </p>
+      ) : null}
+      {loginError === "GOOGLE_EMAIL_UNVERIFIED" ? (
+        <p className="mt-3 rounded-sm border border-danger px-3 py-2 text-[12px] text-danger">
+          Ihre E-Mail-Adresse ist bei Google nicht bestätigt. Bitte bestätigen
+          Sie sie bei Google oder registrieren Sie sich mit E-Mail und Passwort.
         </p>
       ) : null}
       {verifyState === "invalid" ? (

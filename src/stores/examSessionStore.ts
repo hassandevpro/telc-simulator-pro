@@ -31,6 +31,12 @@ interface ExamSessionState {
   hydrate: (persisted: PersistedSessionState) => void;
   setAnswer: (questionId: string, value: AnswerValue) => void;
   markSaved: () => void;
+  /**
+   * Rabaisse le drapeau SEULEMENT si les réponses n'ont pas changé depuis
+   * `snapshot` (la carte envoyée) : une réponse saisie pendant l'écriture
+   * reste en attente au lieu d'être marquée sauvegardée à tort.
+   */
+  markSavedIfUnchanged: (snapshot: AnswerMap) => void;
   setStatus: (status: SessionStatus) => void;
   setPosition: (section: SectionId, part: string) => void;
   reset: () => void;
@@ -67,6 +73,11 @@ export const useExamSessionStore = create<ExamSessionState>()(
         })),
 
       markSaved: () => set({ hasUnsavedChanges: false }),
+
+      markSavedIfUnchanged: (snapshot) =>
+        set((state) =>
+          state.answers === snapshot ? { hasUnsavedChanges: false } : {},
+        ),
 
       setStatus: (status) => set({ status }),
 

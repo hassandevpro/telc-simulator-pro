@@ -6,18 +6,20 @@ import { uploadAudioFromBrowser } from "@/lib/upload-audio-client";
 
 interface AudioFile {
   name: string;
-  url: string;
+  /** Chemin dans le bucket PRIVÉ (aucune URL publique n'existe). */
+  path: string;
 }
 
 /**
- * Bibliothèque des audios uploadés (public/uploads/audio). L'upload
+ * Bibliothèque des audios uploadés (bucket privé « audio »). L'upload
  * contextuel se fait dans l'éditeur de Teil ; ici : vue d'ensemble +
- * upload libre.
+ * upload libre. L'écoute passe par une URL signée admin de courte durée.
  */
 export function AudioLibrary() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<{ path: string; url: string } | null>(null);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/audio");
@@ -39,6 +41,22 @@ export function AudioLibrary() {
     }
     await load();
     setBusy(false);
+  };
+
+  const listen = async (path: string) => {
+    setError(null);
+    const response = await fetch(
+      `/api/admin/audio/preview?path=${encodeURIComponent(path)}`,
+    );
+    const data = (await response.json().catch(() => null)) as {
+      url?: string;
+      error?: string;
+    } | null;
+    if (!response.ok || !data?.url) {
+      setError(data?.error ?? "Vorschau nicht verfügbar.");
+      return;
+    }
+    setPreview({ path, url: data.url });
   };
 
   return (
@@ -65,11 +83,21 @@ export function AudioLibrary() {
         ) : (
           files.map((file) => (
             <div
-              key={file.url}
+              key={file.path}
               className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-[13px]"
             >
-              <span className="font-mono text-[12px]">{file.url}</span>
-              <audio src={file.url} controls preload="none" className="h-8" />
+              <span className="font-mono text-[12px]">{file.path}</span>
+              {preview?.path === file.path ? (
+                <audio src={preview.url} controls autoPlay className="h-8" />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void listen(file.path)}
+                  className="text-[12px] text-accent underline underline-offset-2"
+                >
+                  Anhören
+                </button>
+              )}
             </div>
           ))
         )}

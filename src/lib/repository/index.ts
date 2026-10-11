@@ -2,6 +2,7 @@ import { ApiSessionRepository } from "./api.repository";
 import type { SessionRepository } from "./session-repository";
 
 export type { SessionRepository } from "./session-repository";
+export { SessionWriteError } from "./session-repository";
 export { LocalStorageSessionRepository } from "./local-storage.repository";
 export { ApiSessionRepository } from "./api.repository";
 

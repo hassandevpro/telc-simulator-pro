@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/ui";
 import { EXAM_STRUCTURES } from "@/config/exam-structure";
+import { requireAdmin } from "@/lib/admin-guard";
 import { db } from "@/lib/db";
 
 /** Vue d'un examen : ses 10 Teile, leur état de contenu, liens éditeur. */
@@ -11,6 +12,7 @@ export default async function AdminExamDetailPage({
   params: Promise<{ examId: string }>;
 }) {
   const { examId } = await params;
+  if (!(await requireAdmin())) notFound();
 
   const exam = await db.exam
     .findUnique({
@@ -55,7 +57,7 @@ export default async function AdminExamDetailPage({
                     {part.label}
                     <span className="ml-2 text-[12px] text-muted">
                       {part.questionType} · {count}/{part.itemCount} Fragen
-                      {dbPart?.audioUrl ? " · Audio ✓" : ""}
+                      {(dbPart?.audioPath || dbPart?.audioUrl) ? " · Audio ✓" : ""}
                     </span>
                   </span>
                   <Link

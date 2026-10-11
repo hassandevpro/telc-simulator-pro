@@ -97,6 +97,17 @@ export function ExamShell({ sessionId, children }: ExamShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, hydrate, hydratePlayed, initializeTimer, router, structure]);
 
+  // Le serveur refuse définitivement les réponses (échéance serveur passée,
+  // ou remise faite ailleurs) : on n'entretient pas l'illusion d'une épreuve
+  // ouverte, on passe à la remise.
+  useEffect(() => {
+    if (autosaveStatus !== "locked" || status !== "IN_PROGRESS") return;
+    setStatus("EXPIRED");
+    if (!pathname.endsWith("/abgabe")) {
+      router.replace(`/session/${sessionId}/abgabe`);
+    }
+  }, [autosaveStatus, status, setStatus, pathname, router, sessionId]);
+
   const handleExpire = () => {
     // Ne clôturer QU'UNE fois : sur la page d'abgabe, le timer reste à zéro
     // et re-déclencherait onExpire à chaque montage — sans cette garde, le
@@ -139,15 +150,17 @@ function SaveIndicator({ status }: { status: AutosaveStatus }) {
       : status === "saved"
         ? "Gespeichert"
         : status === "error"
-          ? "Speicherfehler"
-          : "";
+          ? "Speicherfehler – neuer Versuch…"
+          : status === "locked"
+            ? "Nicht gespeichert – Prüfung geschlossen"
+            : "";
 
   return (
     <span
       aria-live="polite"
       className={
         "min-w-24 text-right text-[11px] " +
-        (status === "error" ? "text-danger" : "text-muted")
+        (status === "error" || status === "locked" ? "text-danger" : "text-muted")
       }
     >
       {label}

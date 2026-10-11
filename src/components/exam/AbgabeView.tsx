@@ -4,10 +4,9 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
-import { sessionRepository } from "@/lib/repository";
+import { SessionWriteError, sessionRepository } from "@/lib/repository";
 import { countWords } from "@/lib/text";
 import { useExamSessionStore } from "@/stores/examSessionStore";
-import type { SessionScore } from "@/types/scoring";
 import { SubmitDialog } from "./SubmitDialog";
 
 export interface AbgabePartMeta {
@@ -24,9 +23,9 @@ export interface AbgabeViewProps {
 
 /**
  * Remise finale : récapitulatif répondu/total par Teil, puis confirmation
- * bloquante. À la confirmation : flush des réponses → correction côté
- * serveur (les clés ne descendent jamais) → session close en SCORED →
- * résultats. Une session expirée passe par le même chemin, avec le
+ * bloquante. À la confirmation : flush des réponses → remise définitive
+ * côté serveur (clôture + correction + résultat, les clés ne descendent
+ * jamais) → résultats. Une session expirée passe par le même chemin, avec le
  * libellé « Zeit abgelaufen ».
  */
 export function AbgabeView({ sessionId, parts }: AbgabeViewProps) {
@@ -62,30 +61,33 @@ export function AbgabeView({ sessionId, parts }: AbgabeViewProps) {
     setSubmitting(true);
     setError(null);
     try {
-      // Persiste D'ABORD les dernières réponses (le store est la source
-      // vivante), en attendant l'écriture serveur, PUIS relit l'état complet
-      // — sinon la correction porterait sur des réponses périmées.
-      // Ce flush est désormais INDISPENSABLE : la correction ne lit plus que
-      // les réponses persistées en base (le serveur n'accepte plus ni examId
-      // ni réponses venant du client).
-      await sessionRepository.saveAnswers(sessionId, answers);
-      const state = await sessionRepository.load(sessionId);
-      if (!state) throw new Error("Session introuvable.");
+      // 1. Persiste D'ABORD les dernières réponses : la correction serveur
+      //    ne lit que les réponses en base. Un refus DÉFINITIF (temps écoulé,
+      //    épreuve close) n'empêche pas la remise : on corrige ce qui est
+      //    enregistré. Un échec passager, lui, l'empêche — remettre sans les
+      //    dernières réponses ferait perdre des points au candidat.
+      try {
+        await sessionRepository.saveAnswers(sessionId, answers);
+      } catch (cause) {
+        if (!(cause instanceof SessionWriteError) || cause.retryable) {
+          throw new Error(
+            "Ihre letzten Antworten konnten nicht gespeichert werden. Bitte erneut versuchen.",
+          );
+        }
+      }
 
-      const response = await fetch("/api/sessions/score", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      });
-      if (!response.ok) throw new Error("La correction a échoué.");
-      const score = (await response.json()) as SessionScore;
+      // 2. Remise définitive : clôture + correction + résultat, côté serveur.
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/submit`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Die Abgabe ist fehlgeschlagen.");
+      }
 
-      await sessionRepository.save({
-        ...state,
-        status: "SCORED",
-        submittedAt: state.submittedAt ?? Date.now(),
-        result: score,
-      });
       setStatus("SCORED");
       router.replace(`/results/${sessionId}`);
     } catch (cause) {

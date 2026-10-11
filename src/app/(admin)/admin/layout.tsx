@@ -1,19 +1,19 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { currentRole } from "@/lib/admin-guard";
 import { SignOutButton } from "@/components/auth";
 
 /**
  * Layout admin avec garde de rôle (ARCHITECTURE.md §2).
- * Le middleware protège déjà /admin (connexion requise) ; cette garde
+ * Le proxy (src/proxy.ts) protège déjà /admin (connexion requise) ; cette garde
  * vérifie en plus le rôle. Les rôles seront réellement attribués au
  * Sprint 9 (auth) — la garde est active dès maintenant.
  */
 export default async function AdminLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const session = await auth();
-  const role = session?.user?.role;
+  // Rôle relu EN BASE (pas dans le JWT) : un rôle révoqué n'ouvre plus rien.
+  const role = await currentRole();
 
   // Administration plateforme : SUPER_ADMIN uniquement. Un CENTER_ADMIN est
   // redirigé vers son espace centre.
@@ -46,6 +46,9 @@ export default async function AdminLayout({
             </Link>
             <Link href="/admin/users" className="hover:text-foreground">
               Utilisateurs
+            </Link>
+            <Link href="/admin/sessions" className="hover:text-foreground">
+              Sitzungen
             </Link>
             <Link href="/dashboard" className="hover:text-foreground">
               Zur Übersicht

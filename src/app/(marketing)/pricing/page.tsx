@@ -4,6 +4,8 @@ import { CenterPurchase } from "@/components/marketing/CenterPurchase";
 import { PLAN_DEFINITIONS } from "@/config/plans";
 import { CENTER_SEAT_PRICE, PLAN_PRICES, type PayablePlan } from "@/config/pricing";
 import { WHATSAPP_DISPLAY, whatsappLink } from "@/config/contact";
+import { auth } from "@/lib/auth";
+import { premiumActiveUntil } from "@/lib/plan-purchase";
 
 /** Prix EUR (secondaire) d'un plan, formaté « 9,90 € ». */
 function eurLabel(id: string): string {
@@ -19,6 +21,12 @@ export default async function PricingPage({
   searchParams: Promise<{ welcome?: string }>;
 }) {
   const { welcome } = await searchParams;
+  // Premium encore valable : l'achat Student est expliqué, pas proposé
+  // (le serveur le refuse de toute façon : lib/plan-purchase.ts).
+  const userId = (await auth().catch(() => null))?.user?.id;
+  const premiumUntil = userId
+    ? ((await premiumActiveUntil(userId).catch(() => null))?.getTime() ?? null)
+    : null;
   return (
     <section>
       {welcome ? (
@@ -45,6 +53,7 @@ export default async function PricingPage({
         {PLAN_DEFINITIONS.map((plan) => (
           <Card
             key={plan.id}
+            id={`plan-${plan.id}`}
             className={
               "flex flex-col p-5 " +
               (plan.highlighted ? "border-accent" : "")
@@ -75,7 +84,7 @@ export default async function PricingPage({
             </ul>
             <div className="mt-5">
               {plan.id === "STUDENT" || plan.id === "PREMIUM" ? (
-                <PlanCheckout plan={plan.id as PayablePlan} />
+                <PlanCheckout plan={plan.id as PayablePlan} premiumUntil={premiumUntil} />
               ) : (
                 <CenterPurchase />
               )}
