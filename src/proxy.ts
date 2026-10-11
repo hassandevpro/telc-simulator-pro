@@ -2,12 +2,18 @@ import NextAuth from "next-auth";
 import { authConfig } from "@/lib/auth.config";
 
 /**
- * Protection des routes (ARCHITECTURE.md §2) — RÉACTIVÉE au Sprint 9.
- * Config edge-safe uniquement (aucun import Prisma) ; le callback
- * `authorized` redirige vers /login avec callbackUrl. La garde de rôle
- * ADMIN fine reste dans (admin)/admin/layout.tsx.
+ * Proxy Next.js 16 (ex-`middleware.ts`, convention dépréciée depuis
+ * Next 16 — cf. node_modules/next/dist/docs/.../upgrading/version-16.md).
+ *
+ * Il ne fait qu'un CONTRÔLE GROSSIER : rediriger vers /login un visiteur
+ * non connecté (callback `authorized` de la config edge-safe, sans Prisma).
+ * Il n'est PAS une autorisation : chaque Route Handler et chaque page
+ * sensible revérifie elle-même l'identité et le rôle EN BASE
+ * (lib/admin-guard.ts, lib/exam-access.ts, lib/session-lifecycle.ts).
  */
-export default NextAuth(authConfig).auth;
+const { auth } = NextAuth(authConfig);
+
+export default auth;
 
 export const config = {
   matcher: [

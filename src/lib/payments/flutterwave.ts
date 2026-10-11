@@ -69,14 +69,33 @@ export interface FlutterwaveVerification {
   currency: string;
 }
 
-/** Vérifie une transaction côté serveur (jamais se fier au seul webhook). */
+/** Panne passagère de l'API Flutterwave : le webhook doit répondre 5xx. */
+export class FlutterwaveUnavailableError extends Error {}
+
+/**
+ * Vérifie une transaction côté serveur (jamais se fier au seul webhook).
+ * Renvoie null si Flutterwave répond que la transaction n'est pas exploitable
+ * (refus définitif) ; LÈVE FlutterwaveUnavailableError si la vérification
+ * n'a pas pu avoir lieu (réseau, délai, 5xx) — indécidable, à rejouer.
+ */
 export async function verifyFlutterwaveTransaction(
   transactionId: string,
 ): Promise<FlutterwaveVerification | null> {
-  const response = await fetch(
-    `${BASE}/transactions/${transactionId}/verify`,
-    { headers: { Authorization: `Bearer ${secretKey()}` } },
-  );
+  let response: Response;
+  try {
+    response = await fetch(
+      `${BASE}/transactions/${encodeURIComponent(transactionId)}/verify`,
+      {
+        headers: { Authorization: `Bearer ${secretKey()}` },
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+  } catch {
+    throw new FlutterwaveUnavailableError("Flutterwave injoignable.");
+  }
+  if (response.status >= 500 || response.status === 429) {
+    throw new FlutterwaveUnavailableError(`Flutterwave ${response.status}.`);
+  }
   const data = (await response.json().catch(() => null)) as {
     status?: string;
     data?: {

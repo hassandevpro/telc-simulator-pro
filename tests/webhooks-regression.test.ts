@@ -45,9 +45,15 @@ mock.module("@/lib/billing", {
   },
 });
 
+/** Simule une panne de l'API de vérification Flutterwave. */
+let flwUnavailable = false;
+
 mock.module("@/lib/payments/flutterwave", {
   namedExports: {
-    verifyFlutterwaveTransaction: async () => flwVerification,
+    verifyFlutterwaveTransaction: async () => {
+      if (flwUnavailable) throw new Error("ECONNRESET");
+      return flwVerification;
+    },
   },
 });
 
@@ -78,6 +84,7 @@ before(async () => {
 beforeEach(() => {
   activations.length = 0;
   flwVerification = null;
+  flwUnavailable = false;
   pendingPayment = null;
 });
 
@@ -206,4 +213,34 @@ test("Flutterwave : transaction non 'successful' -> aucune activation", async ()
   );
   assert.equal(response.status, 200);
   assert.deepEqual(activations, []);
+});
+
+test("Flutterwave : verification IMPOSSIBLE (reseau) -> 503 pour que Flutterwave rejoue", async () => {
+  flwUnavailable = true;
+  pendingPayment = { providerRef: "flw_ref_1", amount: 6500, currency: "XAF" };
+  const response = await flutterwaveWebhook(
+    flutterwaveRequest("hash-de-test", FLW_BODY),
+  );
+  assert.equal(response.status, 503);
+  assert.deepEqual(activations, []);
+
+  // Rejeu une fois l'API revenue : activation, une seule fois.
+  flwUnavailable = false;
+  flwVerification = { status: "successful", txRef: "flw_ref_1", amount: 6500, currency: "XAF" };
+  const retry = await flutterwaveWebhook(flutterwaveRequest("hash-de-test", FLW_BODY));
+  assert.equal(retry.status, 200);
+  assert.deepEqual(activations, ["flw_ref_1"]);
+});
+
+test("Flutterwave : verif-hash de longueur differente -> 401 (pas de crash)", async () => {
+  const response = await flutterwaveWebhook(flutterwaveRequest("x", FLW_BODY));
+  assert.equal(response.status, 401);
+  const missing = await flutterwaveWebhook(
+    new Request("http://localhost/api/payments/flutterwave/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(FLW_BODY),
+    }),
+  );
+  assert.equal(missing.status, 401);
 });
