@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
+import { newAudioFileId, uniqueAudioFileName } from "@/lib/audio-path";
 import { getSupabaseStorage } from "@/lib/supabase-storage";
 
 /**
@@ -30,8 +31,7 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const originalName = typeof body?.name === "string" ? body.name : "audio";
-  const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const fileName = `${Date.now()}-${safeName}`;
+  const fileName = uniqueAudioFileName(originalName, newAudioFileId());
 
   // upsert: false — le jeton ne permet que de CRÉER ce chemin, jamais de
   // remplacer un audio existant.
@@ -48,6 +48,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     path: data.path,
     token: data.token,
-    publicUrl: storage.getPublicUrl(fileName).data.publicUrl,
+    // Chemin du fichier dans le bucket PRIVÉ : aucune URL publique n'existe.
   });
 }

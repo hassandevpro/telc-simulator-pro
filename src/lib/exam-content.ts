@@ -32,6 +32,7 @@ interface DbPartRow {
   partId: string;
   sharedContent: unknown;
   audioUrl: string | null;
+  audioPath: string | null;
   questions: {
     id: string;
     position: number;
@@ -62,7 +63,7 @@ function buildBundleFromDb(
       ...(row.audioUrl ? { audioUrl: row.audioUrl } : {}),
     };
 
-    if (row.audioUrl) audioParts.add(`${row.sectionId}/${row.partId}`);
+    if (row.audioPath || row.audioUrl) audioParts.add(`${row.sectionId}/${row.partId}`);
 
     parts[`${row.sectionId}/${row.partId}`] = {
       type: structPart.questionType,
@@ -173,15 +174,16 @@ export async function getPartContent(
 }
 
 /**
- * Emplacement de l'audio d'un Teil — SERVEUR UNIQUEMENT, jamais transmis tel
- * quel à un candidat. Base d'abord (examen importé ou créé), fixture de la
- * démo en repli.
+ * Emplacement de l'audio d'un Teil — SERVEUR UNIQUEMENT, jamais transmis à un
+ * candidat (lib/audio-access.ts en tire une URL signée). `path` = fichier du
+ * bucket privé ; `url` = ancienne URL publique ou chemin statique de la démo.
+ * Base d'abord (examen importé ou créé), fixture de la démo en repli.
  */
 export async function getPartAudioLocation(
   examId: string,
   sectionId: SectionId,
   partId: string,
-): Promise<{ url: string | null }> {
+): Promise<{ path: string | null; url: string | null }> {
   try {
     const part = await db.examPart.findUnique({
       where: {
@@ -191,17 +193,17 @@ export async function getPartAudioLocation(
           partId,
         },
       },
-      select: { audioUrl: true },
+      select: { audioUrl: true, audioPath: true },
     });
-    if (part) return { url: part.audioUrl };
+    if (part) return { path: part.audioPath, url: part.audioUrl };
   } catch {
     // Base indisponible : repli fixture.
   }
   if (examId === DEMO_B2_CONTENT.examId) {
     const shared = DEMO_B2_CONTENT.parts[`${sectionId}/${partId}`]?.shared;
-    return { url: shared?.audioUrl ?? null };
+    return { path: null, url: shared?.audioUrl ?? null };
   }
-  return { url: null };
+  return { path: null, url: null };
 }
 
 /**

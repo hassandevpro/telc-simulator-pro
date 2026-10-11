@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { db } from "@/lib/db";
+import { newAudioFileId, uniqueAudioFileName } from "@/lib/audio-path";
 import { getSupabaseStorage } from "@/lib/supabase-storage";
 import { getStructureForLevel } from "@/config/exam-structure";
 import { generateExam, validateExam } from "@/lib/generator";
@@ -90,7 +91,7 @@ interface AudioResult {
 }
 
 /**
- * Synthétise chaque script Hören et met à jour ExamPart.audioUrl. S'arrête
+ * Synthétise chaque script Hören et met à jour ExamPart.audioPath (bucket privé). S'arrête
  * à la première erreur ElevenLabs et la renvoie de façon exploitable — les
  * audios déjà produits restent attachés (résultat « partial »).
  */
@@ -135,15 +136,22 @@ async function synthesizeAndAttach(
         model,
         voicePool: voicePool.length ? voicePool : undefined,
       });
-      const fileName = `${exam.seed}-${script.partKey.replace("/", "-")}.mp3`;
+      // Nom UNIQUE + upsert:false : régénérer ne remplace jamais un audio
+      // existant (l'ancien fichier reste dans le bucket, rien n'est supprimé).
+      const fileName = uniqueAudioFileName(
+        `${exam.seed}-${script.partKey.replace("/", "-")}.mp3`,
+        newAudioFileId(),
+      );
       const { error } = await storage.upload(fileName, mp3, {
         contentType: "audio/mpeg",
         cacheControl: "31536000",
-        upsert: true,
+        upsert: false,
       });
       if (error) throw new Error(error.message);
-      const url = storage.getPublicUrl(fileName).data.publicUrl;
-      await db.examPart.update({ where: { id: partId }, data: { audioUrl: url } });
+      await db.examPart.update({
+        where: { id: partId },
+        data: { audioPath: fileName, audioUrl: null },
+      });
       generated.push(script.partKey);
     } catch (err) {
       if (err instanceof ElevenLabsError) {

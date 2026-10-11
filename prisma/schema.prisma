@@ -204,8 +204,14 @@ model ExamPart {
   // annonces A–L, texte à trous… Forme validée par Zod selon le type
   // (src/types/question-content.ts).
   sharedContent Json?
-  // Hören uniquement.
+  // Hören uniquement. HISTORIQUE : ancienne URL publique du fichier (ou chemin
+  // statique de la démo). Jamais modifié par la migration de sécurité : c'est
+  // ce qui la rend réversible. Plus lu quand `audioPath` est renseigné.
   audioUrl      String?
+  // Hören uniquement : chemin du fichier DANS le bucket privé « audio »
+  // (ex. « 1760000000-piste.mp3 »). Jamais exposé au candidat : il obtient une
+  // URL signée de courte durée via /api/sessions/{id}/audio/…
+  audioPath     String?
   questions     Question[]
 
   @@unique([examId, sectionId, partId])
@@ -246,6 +252,9 @@ model ExamSession {
   submittedAt  DateTime?
   // Ids des audios déjà consommés (marqués dès `play`).
   audioPlayed  Json          @default("[]")
+  // Nombre d'URL signées émises par audio ({ "hoeren/teil-1": 1 }) : borne les
+  // émissions côté serveur (lib/audio-access.ts), indépendamment du navigateur.
+  audioIssued  Json          @default("{}")
   // Sort du crédit de passage, posé au DÉMARRAGE (dans la même transaction
   // que startedAt) : "CHARGED" (1 crédit débité), "EXEMPT" (rejeu d'un
   // examen déjà fait, SUPER_ADMIN). Null = session HISTORIQUE démarrée avant

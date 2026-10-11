@@ -1,0 +1,222 @@
+/**
+ * Migrations de sécurité : on rejoue l'historique sur une base TEMPORAIRE
+ * (créée puis supprimée par le test), on y met des données « d'avant », on
+ * applique la migration, on vérifie, puis on exécute le retour arrière.
+ *
+ * Preuves visées : rien n'est perdu ni modifié, la reprise des chemins audio
+ * suit exactement la même règle que le code TypeScript, et le retour arrière
+ * restitue des URL utilisables par l'ancien code.
+ * Voir tests/helpers/pg.ts pour l'activation (TEST_DATABASE_URL).
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import pg from "pg";
+import { audioPathFromPublicUrl } from "@/lib/audio-path";
+import { TEST_DATABASE_URL, integrationSkip } from "./helpers/pg";
+
+const MIGRATIONS = path.join(process.cwd(), "prisma", "migrations");
+const AUDIO_MIGRATION = "20261012090000_private_audio";
+const SUPABASE_URL = "https://projet.supabase.co";
+const hasPsql = spawnSync("psql", ["--version"]).status === 0;
+const SECURITY_MIGRATION = "20261011120000_security_hardening";
+
+function sql(file: string): string {
+  return readFileSync(path.join(MIGRATIONS, file), "utf8");
+}
+const migrationDirs = () =>
+  readdirSync(MIGRATIONS, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+/**
+ * Base TEMPORAIRE (créée puis supprimée) où l'historique est rejoué jusqu'à
+ * la migration `before` EXCLUE. Jamais la base de test elle-même.
+ */
+async function withScratch(
+  before: string,
+  fn: (client: pg.Client, url: string) => Promise<void>,
+): Promise<void> {
+  const name = `telc_mig_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const adminUrl = new URL(TEST_DATABASE_URL);
+  adminUrl.pathname = "/postgres";
+  const admin = new pg.Client({ connectionString: adminUrl.toString() });
+  await admin.connect();
+  await admin.query(`CREATE DATABASE "${name}"`);
+  const url = new URL(TEST_DATABASE_URL);
+  url.pathname = `/${name}`;
+  const client = new pg.Client({ connectionString: url.toString() });
+  await client.connect();
+  try {
+    for (const dir of migrationDirs()) {
+      if (dir >= before) continue;
+      await client.query(sql(`${dir}/migration.sql`));
+    }
+    await fn(client, url.toString());
+  } finally {
+    await client.end();
+    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    await admin.end();
+  }
+}
+
+/** URL d'audio avant migration → chemin attendu (null = non repris). */
+const LEGACY_AUDIO: [string, string | null, string | null][] = [
+  ["p-public", `${SUPABASE_URL}/storage/v1/object/public/audio/1760000000-piste.mp3`, "1760000000-piste.mp3"],
+  ["p-query", `${SUPABASE_URL}/storage/v1/object/public/audio/seed-1-hoeren-teil-1.mp3?t=2026`, "seed-1-hoeren-teil-1.mp3"],
+  ["p-folder", `${SUPABASE_URL}/storage/v1/object/public/audio/dossier/x.mp3`, null],
+  ["p-other-bucket", `${SUPABASE_URL}/storage/v1/object/public/autre/x.mp3`, null],
+  ["p-static", "/audio/demo/hoeren-teil-1.wav", null],
+  ["p-external", "https://cdn.example/x.mp3", null],
+  ["p-none", null, null],
+];
+
+test("migration audio : avant → après → retour arrière → de nouveau en avant", { skip: integrationSkip }, () =>
+  withScratch(AUDIO_MIGRATION, async (scratch, scratchUrl) => {
+  // 1. État « d'avant » : toutes les migrations antérieures.
+  await scratch.query(`
+    INSERT INTO "Exam"(id, title, level, "isPublished", "createdAt", "updatedAt")
+    VALUES ('e1', 'Test', 'B2', true, now(), now());
+    INSERT INTO "User"(id, email, name, "createdAt", "updatedAt")
+    VALUES ('u1', 'u1@x', 'U', now(), now());
+    INSERT INTO "ExamSession"(id, "userId", "examId", status, "createdAt")
+    VALUES ('s1', 'u1', 'e1', 'IN_PROGRESS', now());
+  `);
+  for (const [id, audioUrl] of LEGACY_AUDIO) {
+    await scratch.query(
+      `INSERT INTO "ExamPart"(id, "examId", "sectionId", "partId", "audioUrl") VALUES ($1, 'e1', 'hoeren', $1, $2)`,
+      [id, audioUrl],
+    );
+  }
+  const before = await scratch.query(`SELECT id, "audioUrl" FROM "ExamPart" ORDER BY id`);
+
+  // 2. Migration en avant.
+  await scratch.query(sql(`${AUDIO_MIGRATION}/migration.sql`));
+
+  const after = await scratch.query(`SELECT id, "audioUrl", "audioPath" FROM "ExamPart" ORDER BY id`);
+  assert.equal(after.rowCount, before.rowCount, "aucune ligne perdue");
+  for (const [index, row] of after.rows.entries()) {
+    assert.equal(row.audioUrl, before.rows[index].audioUrl, `audioUrl de ${row.id} intact`);
+    const expected = LEGACY_AUDIO.find(([id]) => id === row.id)![2];
+    assert.equal(row.audioPath, expected, `audioPath de ${row.id}`);
+    // Parité exacte avec la règle TypeScript utilisée à l'exécution.
+    assert.equal(row.audioPath, audioPathFromPublicUrl(row.audioUrl), `parité SQL/TS pour ${row.id}`);
+  }
+  const session = await scratch.query(`SELECT status, "audioIssued" FROM "ExamSession" WHERE id = 's1'`);
+  assert.equal(session.rows[0].status, "IN_PROGRESS", "session existante intacte");
+  assert.deepEqual(session.rows[0].audioIssued, {});
+
+  // 3. Données créées APRÈS la migration : chemin seul, sans URL.
+  await scratch.query(
+    `INSERT INTO "ExamPart"(id, "examId", "sectionId", "partId", "audioPath") VALUES ('p-new', 'e1', 'hoeren', 'p-new', 'nouveau.mp3')`,
+  );
+
+  // 4. Retour arrière (psql, comme en procédure réelle).
+  if (!hasPsql) {
+    console.warn("psql absent : retour arrière non exécuté");
+    return;
+  }
+  const down = spawnSync(
+    "psql",
+    [scratchUrl, "-v", "ON_ERROR_STOP=1", "-v", `supabase_url=${SUPABASE_URL}`, "-f", path.join(MIGRATIONS, AUDIO_MIGRATION, "down.sql")],
+    { encoding: "utf8" },
+  );
+  assert.equal(down.status, 0, down.stderr);
+
+  const columns = await scratch.query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE (table_name = 'ExamPart' AND column_name = 'audioPath')
+        OR (table_name = 'ExamSession' AND column_name = 'audioIssued')`,
+  );
+  assert.equal(columns.rowCount, 0, "colonnes ajoutées supprimées");
+
+  const restored = await scratch.query(`SELECT id, "audioUrl" FROM "ExamPart" ORDER BY id`);
+  assert.equal(restored.rowCount, before.rowCount! + 1, "aucune ligne supprimée");
+  for (const row of before.rows) {
+    assert.equal(
+      restored.rows.find((r) => r.id === row.id)!.audioUrl,
+      row.audioUrl,
+      `audioUrl d'origine de ${row.id} restitué à l'identique`,
+    );
+  }
+  assert.equal(
+    restored.rows.find((r) => r.id === "p-new")!.audioUrl,
+    `${SUPABASE_URL}/storage/v1/object/public/audio/nouveau.mp3`,
+    "l'audio rattaché après la migration retrouve une URL pour l'ancien code",
+  );
+  assert.equal((await scratch.query(`SELECT 1 FROM "ExamSession" WHERE id = 's1'`)).rowCount, 1);
+
+  // 5. Rejouable : on peut de nouveau avancer après un retour arrière.
+  await scratch.query(sql(`${AUDIO_MIGRATION}/migration.sql`));
+  const again = await scratch.query(`SELECT "audioPath" FROM "ExamPart" WHERE id = 'p-public'`);
+  assert.equal(again.rows[0].audioPath, "1760000000-piste.mp3");
+  }),
+);
+
+/**
+ * Migration du sprint précédent (sièges datés, preuve d'e-mail) rejouée sur
+ * des données « d'avant » : centres au compteur cumulatif, comptes Google et
+ * à mot de passe, membres.
+ */
+test("migration sécurité : sièges repris en dotations, comptes et paiements intacts", { skip: integrationSkip }, () =>
+  withScratch(SECURITY_MIGRATION, async (db) => {
+    await db.query(`
+      INSERT INTO "User"(id, email, "passwordHash", name, "emailVerified", plan, "planExpiresAt", "createdAt", "updatedAt") VALUES
+        ('owner',  'o@x',  'h',  'O',  now(), 'CENTER', now() + interval '12 days', now() - interval '90 days', now()),
+        ('owner2', 'o2@x', 'h',  'O2', now(), 'CENTER', NULL, now(), now()),
+        ('owner3', 'o3@x', 'h',  'O3', now(), 'CENTER', now() + interval '5 days', now(), now()),
+        ('goog',   'g@x',  NULL, 'G',  now(), 'FREE',   NULL, now(), now()),
+        ('pw',     'pw@x', 'h',  'PW', now(), 'FREE',   NULL, now(), now()),
+        ('pw2',    'pw2@x','h',  'PW2', NULL, 'FREE',   NULL, now(), now());
+      INSERT INTO "Center"(id, name, "ownerId", "inviteCode", seats) VALUES
+        ('c1', 'C1', 'owner',  'inv1', 100),
+        ('c2', 'C2', 'owner2', 'inv2', 7),
+        ('c3', 'C3', 'owner3', 'inv3', 0);
+      INSERT INTO "User"(id, email, "passwordHash", name, "centerId", "createdAt", "updatedAt")
+        VALUES ('m1', 'm1@x', 'h', 'M', 'c1', now() - interval '5 days', now());
+      INSERT INTO "Payment"(id, "userId", provider, "providerRef", plan, amount, currency, status, "updatedAt")
+        VALUES ('pay1', 'owner', 'STRIPE', 'ref-1', 'CENTER', 250000, 'XAF', 'SUCCESS', now());
+    `);
+    const users = (await db.query(`SELECT count(*)::int AS n FROM "User"`)).rows[0].n;
+
+    await db.query(sql(`${SECURITY_MIGRATION}/migration.sql`));
+
+    // Sièges : une dotation par centre à quota > 0, valable jusqu'à la fin de l'abonnement payé.
+    const grants = await db.query(
+      `SELECT "centerId", seats, round(extract(epoch FROM ("expiresAt" - now())) / 86400)::int AS days
+       FROM "CenterSeatGrant" ORDER BY "centerId"`,
+    );
+    assert.deepEqual(
+      grants.rows.map((row) => [row.centerId, row.seats, row.days]),
+      [["c1", 100, 12], ["c2", 7, 30]],
+      "c1 jusqu'à la fin de l'abonnement ; c2 (sans date) 30 jours ; c3 (0 siège) aucune dotation",
+    );
+    assert.equal(
+      (await db.query(`SELECT seats FROM "Center" WHERE id = 'c1'`)).rows[0].seats,
+      100,
+      "ancien compteur conservé (historique)",
+    );
+
+    // Preuve d'e-mail : seuls les comptes Google sont repris ; les comptes à
+    // mot de passe restent à prouver, sans aucune autre modification.
+    const proofs = await db.query(`SELECT id, "emailVerifiedBy", "emailVerified" IS NOT NULL AS ev FROM "User" ORDER BY id`);
+    const by = Object.fromEntries(proofs.rows.map((row) => [row.id, row.emailVerifiedBy]));
+    assert.equal(by.goog, "GOOGLE");
+    for (const id of ["owner", "pw", "pw2", "m1"]) assert.equal(by[id], null, id);
+    assert.equal(proofs.rows.find((row) => row.id === "pw")!.ev, true, "emailVerified d'origine intact");
+    assert.equal(proofs.rows.find((row) => row.id === "pw2")!.ev, false);
+
+    // Membres : l'ordre d'adhésion repart de la création du compte.
+    const member = await db.query(`SELECT "centerJoinedAt" = "createdAt" AS same FROM "User" WHERE id = 'm1'`);
+    assert.equal(member.rows[0].same, true);
+    assert.equal((await db.query(`SELECT "centerJoinedAt" FROM "User" WHERE id = 'owner'`)).rows[0].centerJoinedAt, null);
+
+    // Rien n'est perdu.
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM "User"`)).rows[0].n, users);
+    const payment = await db.query(`SELECT status, amount FROM "Payment" WHERE id = 'pay1'`);
+    assert.deepEqual(payment.rows[0], { status: "SUCCESS", amount: 250000 });
+  }),
+);

@@ -6,7 +6,8 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export interface UploadAudioResult {
-  url?: string;
+  /** Chemin du fichier dans le bucket PRIVÉ « audio » (jamais une URL publique). */
+  path?: string;
   error?: string;
 }
 
@@ -33,10 +34,9 @@ export async function uploadAudioFromBrowser(
   });
 
   if (signResponse.ok) {
-    const { path, token, publicUrl } = (await signResponse.json()) as {
+    const { path, token } = (await signResponse.json()) as {
       path: string;
       token: string;
-      publicUrl: string;
     };
 
     if (!url || !anonKey) {
@@ -49,7 +49,7 @@ export async function uploadAudioFromBrowser(
       .from("audio")
       .uploadToSignedUrl(path, token, file, { contentType: file.type });
     if (error) return { error: error.message };
-    return { url: publicUrl };
+    return { path };
   }
 
   if (signResponse.status === 501) {
@@ -62,13 +62,13 @@ export async function uploadAudioFromBrowser(
       body: formData,
     });
     const data = (await response.json().catch(() => null)) as {
-      url?: string;
+      path?: string;
       error?: string;
     } | null;
     if (!response.ok) {
       return { error: data?.error ?? "Upload fehlgeschlagen." };
     }
-    return { url: data?.url };
+    return { path: data?.path };
   }
 
   const data = (await signResponse.json().catch(() => null)) as {

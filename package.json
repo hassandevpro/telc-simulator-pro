@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node scripts/run-tests.mjs",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "check:audio": "tsx scripts/check-supabase-audio.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

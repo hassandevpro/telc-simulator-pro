@@ -57,7 +57,7 @@ export default async function AdminExamDetailPage({
                     {part.label}
                     <span className="ml-2 text-[12px] text-muted">
                       {part.questionType} · {count}/{part.itemCount} Fragen
-                      {dbPart?.audioUrl ? " · Audio ✓" : ""}
+                      {(dbPart?.audioPath || dbPart?.audioUrl) ? " · Audio ✓" : ""}
                     </span>
                   </span>
                   <Link

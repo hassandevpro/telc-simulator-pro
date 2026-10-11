@@ -130,6 +130,11 @@ test("page d'examen (arbre de composants rendu côté serveur) : aucune transcri
   assert.ok(!serialized.includes(TRANSCRIPT), "transcription dans les propriétés des composants");
   assert.ok(!serialized.includes("HINT_SENTINEL"));
   assert.ok(!serialized.includes("KEY_SENTINEL"));
+  // Le bucket est privé : la page ne porte ni URL de stockage, ni chemin de fichier.
+  assert.ok(!serialized.includes("AUDIO_LOCATION_SENTINEL"), "emplacement audio dans la page");
+  assert.ok(!serialized.includes("supabase.co"), "URL de stockage dans la page");
+  assert.ok(serialized.includes('"audioId":"hoeren/teil-1"'), "le lecteur audio est bien présent");
+  assert.ok(!/"src":/.test(serialized.slice(serialized.indexOf("audioId"), serialized.indexOf("audioId") + 80)), "le lecteur ne reçoit aucune source");
 });
 
 test("page de remise (abgabe) : aucune transcription", { skip: integrationSkip }, async () => {
