@@ -77,7 +77,7 @@ export async function POST(request: Request) {
     const { error } = await storage.upload(
       fileName,
       Buffer.from(await file.arrayBuffer()),
-      { contentType: file.type, cacheControl: "31536000" },
+      { contentType: file.type, cacheControl: "31536000", upsert: false },
     );
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

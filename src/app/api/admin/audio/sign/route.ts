@@ -8,7 +8,9 @@ import { getSupabaseStorage } from "@/lib/supabase-storage";
  * non configurable) : le navigateur envoie ensuite les octets DIRECTEMENT
  * à Supabase avec ce jeton, jamais via cette fonction serverless.
  * La garde admin est ici, à l'émission — le jeton lui-même est à usage
- * unique et borné à un seul chemin.
+ * unique, borné à un seul chemin neuf, et émis avec la clé de service
+ * (lib/supabase-storage.ts) : le bucket n'a besoin d'AUCUNE règle
+ * d'écriture pour les rôles anon/authenticated.
  */
 export async function POST(request: Request) {
   if (!(await requireAdmin())) {
@@ -31,7 +33,11 @@ export async function POST(request: Request) {
   const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const fileName = `${Date.now()}-${safeName}`;
 
-  const { data, error } = await storage.createSignedUploadUrl(fileName);
+  // upsert: false — le jeton ne permet que de CRÉER ce chemin, jamais de
+  // remplacer un audio existant.
+  const { data, error } = await storage.createSignedUploadUrl(fileName, {
+    upsert: false,
+  });
   if (error || !data) {
     return NextResponse.json(
       { error: error?.message ?? "Signatur fehlgeschlagen." },
