@@ -175,6 +175,15 @@ model Payment {
   currency     String
   // Places achetées (paiement CENTER par quota) — null pour Student/Premium.
   seats        Int?
+  // Nature de l'achat de sièges, fixée à l'initiation (lib/center-pricing.ts) :
+  // "NEW" (aucun siège actif), "RENEW" (période suivante, à la fin de la
+  // période payée) ou "ADD" (sièges supplémentaires jusqu'à cette échéance,
+  // au prorata). Null = paiement antérieur à cette règle : ancien traitement
+  // (30 jours à partir de l'activation).
+  centerMode   String?
+  // ADD uniquement : jours facturés (repli si la période a expiré entre
+  // l'initiation et le paiement : les sièges durent alors ce qui a été payé).
+  periodDays   Int?
   status       PaymentStatus   @default(PENDING)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -240,29 +249,33 @@ model Question {
 }
 
 model ExamSession {
-  id           String        @id @default(cuid())
-  userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  examId       String
-  exam         Exam          @relation(fields: [examId], references: [id])
-  status       SessionStatus @default(AUDIO_CHECK)
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId          String
+  exam            Exam          @relation(fields: [examId], references: [id])
+  status          SessionStatus @default(AUDIO_CHECK)
   // Ancre du timer — posée une seule fois, JAMAIS modifiée ensuite.
   // Fondement du timer inviolable (ARCHITECTURE.md §6).
-  startedAt    DateTime?
-  submittedAt  DateTime?
+  startedAt       DateTime?
+  submittedAt     DateTime?
   // Ids des audios déjà consommés (marqués dès `play`).
-  audioPlayed  Json          @default("[]")
+  audioPlayed     Json          @default("[]")
   // Nombre d'URL signées émises par audio ({ "hoeren/teil-1": 1 }) : borne les
   // émissions côté serveur (lib/audio-access.ts), indépendamment du navigateur.
-  audioIssued  Json          @default("{}")
+  audioIssued     Json          @default("{}")
   // Sort du crédit de passage, posé au DÉMARRAGE (dans la même transaction
   // que startedAt) : "CHARGED" (1 crédit débité), "EXEMPT" (rejeu d'un
   // examen déjà fait, SUPER_ADMIN). Null = session HISTORIQUE démarrée avant
   // ce contrôle : l'ancien débit à la remise lui est appliqué.
-  creditStatus String?
-  answers      Answer[]
-  result       Result?
-  createdAt    DateTime      @default(now())
+  creditStatus    String?
+  // Compte dont le crédit a été débité (propriétaire du centre ou candidat) :
+  // c'est lui qu'un remboursement manuel recrédite. Null = non débité, ou
+  // session antérieure à ce suivi (repli : le candidat).
+  creditAccountId String?
+  answers         Answer[]
+  result          Result?
+  createdAt       DateTime      @default(now())
 
   // Index présents en base et réellement utiles : aucune contrainte ne
   // couvre ces colonnes (sessions par candidat, sessions par examen).
@@ -325,4 +338,23 @@ model LessonProgress {
   // Une seule ligne par (utilisateur, leçon) : l'enregistrement est un upsert.
   @@unique([userId, lessonSlug])
   @@index([userId])
+}
+
+/**
+ * Journal des ajustements MANUELS de crédits (remboursement d'un examen par
+ * un administrateur). Un seul remboursement par session (sessionId unique) :
+ * c'est aussi ce qui rend l'opération idempotente.
+ */
+model CreditAdjustment {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  // Compte recrédité.
+  accountId String
+  amount    Int
+  reason    String
+  // Administrateur qui a décidé le remboursement.
+  adminId   String
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
 }

@@ -3,8 +3,9 @@ import { randomBytes } from "node:crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
-import { CENTER_CREDITS_PER_SEAT, creditsForPlan } from "@/config/credits";
-import { SEAT_PERIOD_DAYS, memberHasActiveSeat } from "@/lib/center-seats";
+import { creditsForPlan } from "@/config/credits";
+import { creditsForGrant, grantWindow } from "@/lib/center-pricing";
+import { memberHasActiveSeat, seatPeriodState } from "@/lib/center-seats";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -67,14 +68,13 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
         current.plan !== "FREE" && current.expiresAt !== null && current.expiresAt > now;
 
       if (payment.plan === "CENTER") {
-        await grantCenterSeats(tx, payment, now);
+        const granted = await grantCenterSeats(tx, payment, now);
         const seats = payment.seats ?? 0;
-        const seatsUntil = now + SEAT_PERIOD_DAYS * DAY_MS;
         // Plan PERSONNEL du propriétaire : un Student/Premium encore actif est
         // conservé tel quel (les sièges ont leur propre validité). Sinon il
-        // devient CENTER jusqu'à la fin des sièges achetés — sans cumul de
-        // durée : un renouvellement ne prolonge que ce qu'il paie.
+        // devient CENTER jusqu'à la fin de la dernière période de sièges payée.
         const keepPersonal = currentActive && current.plan !== "CENTER";
+        const endOfSeats = granted.expiresAt?.getTime() ?? 0;
         await tx.user.update({
           where: { id: payment.userId },
           data: {
@@ -83,12 +83,14 @@ export async function activatePlanByRef(providerRef: string): Promise<boolean> {
               : {
                   plan: "CENTER" as const,
                   planExpiresAt: new Date(
-                    Math.max(seatsUntil, currentActive ? current.expiresAt! : 0),
+                    Math.max(endOfSeats, currentActive ? current.expiresAt! : 0),
                   ),
                 }),
             // Un SUPER_ADMIN qui achète des sièges reste SUPER_ADMIN.
             ...(user?.role === "SUPER_ADMIN" ? {} : { role: "CENTER_ADMIN" as const }),
-            credits: { increment: seats * CENTER_CREDITS_PER_SEAT },
+            credits: {
+              increment: creditsForGrant(payment.centerMode, seats, payment.periodDays),
+            },
           },
         });
         return true;
@@ -149,15 +151,23 @@ function proratedDays(bought: string, into: string, days: number): number {
 
 /**
  * Achat de sièges : crée le centre s'il n'existe pas, puis une DOTATION
- * datée (CenterSeatGrant) valable SEAT_PERIOD_DAYS à partir de maintenant.
- * Aucun compteur cumulatif : des sièges expirés ne survivent jamais à un
- * renouvellement plus petit.
+ * datée (CenterSeatGrant). Les dates dépendent du mode fixé à l'initiation
+ * (lib/center-pricing.ts) : nouveau, renouvellement à la fin de la période
+ * payée, ou ajout jusqu'à cette échéance. Aucun compteur cumulatif : des
+ * sièges expirés ne survivent jamais à un renouvellement plus petit.
+ * Renvoie la fin de la dotation créée.
  */
 async function grantCenterSeats(
   tx: Prisma.TransactionClient,
-  payment: { userId: string; seats: number | null; providerRef: string },
+  payment: {
+    userId: string;
+    seats: number | null;
+    providerRef: string;
+    centerMode: string | null;
+    periodDays: number | null;
+  },
   now: number,
-): Promise<void> {
+): Promise<{ expiresAt: Date | null }> {
   const center =
     (await tx.center.findUnique({ where: { ownerId: payment.userId } })) ??
     (await tx.center.create({
@@ -168,16 +178,27 @@ async function grantCenterSeats(
       },
     }));
   const seats = payment.seats ?? 0;
-  if (seats <= 0) return;
+  if (seats <= 0) return { expiresAt: null };
+
+  // Verrou de ligne du centre : deux paiements simultanés s'enchaînent au
+  // lieu de se chevaucher (le second voit la dotation du premier).
+  await tx.$queryRaw`SELECT "id" FROM "Center" WHERE "id" = ${center.id} FOR UPDATE`;
+  const window = grantWindow({
+    mode: payment.centerMode,
+    periodDays: payment.periodDays,
+    state: await seatPeriodState(tx, center.id, new Date(now)),
+    now: new Date(now),
+  });
   await tx.centerSeatGrant.create({
     data: {
       centerId: center.id,
       seats,
-      startsAt: new Date(now),
-      expiresAt: new Date(now + SEAT_PERIOD_DAYS * DAY_MS),
+      startsAt: window.startsAt,
+      expiresAt: window.expiresAt,
       paymentRef: payment.providerRef,
     },
   });
+  return { expiresAt: window.expiresAt };
 }
 
 /**

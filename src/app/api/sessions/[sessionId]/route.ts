@@ -6,6 +6,7 @@ import { buildSessionState } from "@/lib/session-server";
 import {
   expireIfOverdue,
   expireSession,
+  previewCreditCharge,
   saveSessionAnswers,
   startSession,
   type LifecycleError,
@@ -60,7 +61,11 @@ export async function GET(
   // Le temps fait autorité côté SERVEUR : une session dont l'échéance est
   // passée est fermée ici, quoi que le navigateur affiche.
   row.status = (await expireIfOverdue(row)) as typeof row.status;
-  return NextResponse.json(buildSessionState(row));
+  const state = buildSessionState(row);
+  if (row.status === "AUDIO_CHECK") {
+    state.creditPreview = await previewCreditCharge(guard.userId, sessionId, row.examId);
+  }
+  return NextResponse.json(state);
 }
 
 const patchSchema = z.discriminatedUnion("op", [

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getPlanPrice } from "@/config/pricing";
+import { blockStudentDuringPremium } from "@/lib/plan-purchase";
 import { stripe } from "@/lib/payments/stripe";
 
 const schema = z.object({ plan: z.enum(["STUDENT", "PREMIUM"]) });
@@ -27,6 +28,10 @@ export async function POST(request: Request) {
   if (!price) {
     return NextResponse.json({ error: "Ungültiger Plan." }, { status: 400 });
   }
+
+  // Pas d'achat Student pendant un Premium actif (lib/plan-purchase.ts).
+  const blocked = await blockStudentDuringPremium(user.id, price.plan);
+  if (blocked) return blocked;
 
   const origin = new URL(request.url).origin;
 

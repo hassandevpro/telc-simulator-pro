@@ -151,7 +151,11 @@ export async function startSession(
       }
       await tx.examSession.update({
         where: { id: sessionId },
-        data: { creditStatus: charge.kind === "charge" ? "CHARGED" : "EXEMPT" },
+        data: {
+          creditStatus: charge.kind === "charge" ? "CHARGED" : "EXEMPT",
+          // Compte débité : c'est lui qu'un remboursement manuel recrédite.
+          creditAccountId: charge.kind === "charge" ? charge.accountId : null,
+        },
       });
       return { ok: true as const, alreadyStarted: false };
     });
@@ -171,7 +175,7 @@ type Charge = { kind: "exempt" } | { kind: "charge"; accountId: string };
  * du propriétaire.
  */
 async function decideCharge(
-  tx: Tx,
+  tx: Tx | typeof db,
   userId: string,
   examId: string,
   sessionId: string,
@@ -191,6 +195,25 @@ async function decideCharge(
   if (alreadyDone) return { kind: "exempt" };
 
   return { kind: "charge", accountId: await creditAccountFor(tx, userId) };
+}
+
+/**
+ * Ce que coûtera le démarrage, pour le LUI DIRE avant : même décision que le
+ * débit réel (decideCharge), sans rien écrire. Affiché dans la confirmation
+ * du test casque — le débit, lui, reste décidé par startSession.
+ */
+export async function previewCreditCharge(
+  userId: string,
+  sessionId: string,
+  examId: string,
+): Promise<{ charge: boolean; balance: number }> {
+  const charge = await decideCharge(db, userId, examId, sessionId);
+  const accountId = charge.kind === "charge" ? charge.accountId : await creditAccountFor(db, userId);
+  const account = await db.user.findUnique({
+    where: { id: accountId },
+    select: { credits: true },
+  });
+  return { charge: charge.kind === "charge", balance: account?.credits ?? 0 };
 }
 
 /* ──────────────────────────────── Réponses ─────────────────────────────── */
@@ -401,7 +424,7 @@ export async function submitSession(
       });
       await tx.examSession.update({
         where: { id: sessionId },
-        data: { creditStatus: "CHARGED_AT_SUBMIT" },
+        data: { creditStatus: "CHARGED_AT_SUBMIT", creditAccountId: accountId },
       });
     }
 

@@ -47,6 +47,9 @@ export default async function AdminLayout({
             <Link href="/admin/users" className="hover:text-foreground">
               Utilisateurs
             </Link>
+            <Link href="/admin/sessions" className="hover:text-foreground">
+              Sitzungen
+            </Link>
             <Link href="/dashboard" className="hover:text-foreground">
               Zur Übersicht
             </Link>

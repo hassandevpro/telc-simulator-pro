@@ -55,4 +55,10 @@ export interface PersistedSessionState {
   /** Audios déjà consommés — marqués dès l'événement `play`, pas `ended`. */
   playedAudioIds: string[];
   updatedAt: number;
+  /**
+   * Session au test casque uniquement : ce que coûtera le démarrage (1 crédit
+   * ou rien) et le solde utilisable. Calculé par le serveur, pour la
+   * confirmation affichée avant de lancer l'épreuve.
+   */
+  creditPreview?: { charge: boolean; balance: number };
 }

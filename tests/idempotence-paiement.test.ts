@@ -119,7 +119,11 @@ const tx = {
       return center;
     },
   },
+  // Verrou de ligne du centre : sérialisation réelle prouvée sur PostgreSQL
+  // (tests/int-commercial.test.ts) ; ce double n'en a pas besoin.
+  $queryRaw: async () => [],
   centerSeatGrant: {
+    aggregate: async () => ({ _max: { expiresAt: null } }),
     create: async ({
       data,
     }: {

@@ -3,11 +3,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import {
-  CENTER_SEAT_PRICE,
-  centerAmount,
-  getPlanPrice,
-} from "@/config/pricing";
+import { CENTER_SEAT_PRICE, getPlanPrice } from "@/config/pricing";
+import { modeRequiredBody, prepareCenterPurchase } from "@/lib/center-purchase";
+import { blockStudentDuringPremium } from "@/lib/plan-purchase";
 import {
   CAMERPAY_PAYMENT_METHOD,
   initiateCamerPayPayment,
@@ -31,6 +29,9 @@ const schema = z
   .object({
     plan: z.enum(["STUDENT", "PREMIUM", "CENTER"]),
     // CENTER uniquement — ignoré pour les autres plans.
+    // Tant que le centre a des sièges actifs : « renew » (période suivante,
+    // à la fin de la période payée) ou « add » (sièges en plus, au prorata).
+    mode: z.enum(["renew", "add"]).optional(),
     seats: z
       .number()
       .int()
@@ -74,12 +75,31 @@ export async function POST(request: Request) {
   }
   const { plan } = parsed.data;
 
+  // Pas d'achat Student pendant un Premium actif (lib/plan-purchase.ts).
+  const blocked = await blockStudentDuringPremium(user.id, plan);
+  if (blocked) return blocked;
+
   // ── Montant : décidé ICI, jamais lu depuis la requête ──────────────────
   let amount: number;
   let seats: number | null = null;
+  let centerMode: string | null = null;
+  let periodDays: number | null = null;
   if (plan === "CENTER") {
     seats = parsed.data.seats ?? 0;
-    amount = Math.round(centerAmount(seats, "XAF"));
+    // Devis sur l'état RÉEL des sièges (nouveau / renouvellement / ajout au
+    // prorata) : lib/center-pricing.ts.
+    const quote = await prepareCenterPurchase({
+      userId: user.id,
+      seats,
+      requested: parsed.data.mode,
+      currency: "XAF",
+    });
+    if (!quote.ok) {
+      return NextResponse.json(modeRequiredBody(quote), { status: 409 });
+    }
+    amount = Math.round(quote.quote.amount);
+    centerMode = quote.quote.mode;
+    periodDays = quote.quote.mode === "ADD" ? quote.quote.billedDays : null;
   } else {
     const price = getPlanPrice(plan);
     if (!price) {
@@ -128,6 +148,8 @@ export async function POST(request: Request) {
         amount,
         currency: "XAF",
         seats,
+        centerMode,
+        periodDays,
         createdAt: { gt: new Date(Date.now() - RETRY_WINDOW_MS) },
       },
       orderBy: { createdAt: "desc" },
@@ -143,6 +165,8 @@ export async function POST(request: Request) {
           providerRef: invoiceId,
           plan,
           seats,
+          centerMode,
+          periodDays,
           amount,
           currency: "XAF",
           status: "PENDING",

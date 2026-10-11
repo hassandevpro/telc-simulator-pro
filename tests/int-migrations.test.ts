@@ -220,3 +220,56 @@ test("migration sécurité : sièges repris en dotations, comptes et paiements i
     assert.deepEqual(payment.rows[0], { status: "SUCCESS", amount: 250000 });
   }),
 );
+
+const COMMERCIAL_MIGRATION = "20261013090000_commercial_rules";
+
+/**
+ * Règles commerciales : migration purement additive. Les paiements en attente
+ * gardent centerMode NULL (= ancien traitement à l'activation) et les sessions
+ * déjà débitées restent remboursables à l'identique ; le retour arrière ne
+ * retire que ce qui a été ajouté.
+ */
+test("migration règles commerciales : additive, paiements en attente préservés, retour arrière", { skip: integrationSkip }, () =>
+  withScratch(COMMERCIAL_MIGRATION, async (db, url) => {
+    await db.query(`
+      INSERT INTO "User"(id, email, name, credits, "createdAt", "updatedAt") VALUES ('u1', 'u1@x', 'U', 3, now(), now());
+      INSERT INTO "Exam"(id, title, level, "createdAt", "updatedAt") VALUES ('e1', 'T', 'B2', now(), now());
+      INSERT INTO "ExamSession"(id, "userId", "examId", status, "creditStatus", "createdAt")
+        VALUES ('s1', 'u1', 'e1', 'SCORED', 'CHARGED', now());
+      INSERT INTO "Payment"(id, "userId", provider, "providerRef", plan, seats, amount, currency, status, "updatedAt")
+        VALUES ('p1', 'u1', 'STRIPE', 'ref-pending', 'CENTER', 5, 20, 'EUR', 'PENDING', now()),
+               ('p2', 'u1', 'STRIPE', 'ref-done', 'STUDENT', NULL, 9.9, 'EUR', 'SUCCESS', now());
+    `);
+
+    await db.query(sql(`${COMMERCIAL_MIGRATION}/migration.sql`));
+
+    const payments = await db.query(`SELECT "providerRef", status, "centerMode", "periodDays", seats FROM "Payment" ORDER BY id`);
+    assert.deepEqual(payments.rows, [
+      { providerRef: "ref-pending", status: "PENDING", centerMode: null, periodDays: null, seats: 5 },
+      { providerRef: "ref-done", status: "SUCCESS", centerMode: null, periodDays: null, seats: null },
+    ]);
+    const session = await db.query(`SELECT status, "creditStatus", "creditAccountId" FROM "ExamSession" WHERE id = 's1'`);
+    assert.deepEqual(session.rows[0], { status: "SCORED", creditStatus: "CHARGED", creditAccountId: null });
+    assert.equal((await db.query(`SELECT credits FROM "User" WHERE id = 'u1'`)).rows[0].credits, 3, "aucun solde modifié");
+
+    // Journal : un seul remboursement par session (clé unique).
+    await db.query(`INSERT INTO "CreditAdjustment"(id, "sessionId", "accountId", amount, reason, "adminId") VALUES ('a1', 's1', 'u1', 1, 'test', 'admin')`);
+    await assert.rejects(
+      db.query(`INSERT INTO "CreditAdjustment"(id, "sessionId", "accountId", amount, reason, "adminId") VALUES ('a2', 's1', 'u1', 1, 'doublon', 'admin')`),
+      /duplicate key/,
+    );
+
+    if (!hasPsql) return;
+    const down = spawnSync(
+      "psql",
+      [url, "-v", "ON_ERROR_STOP=1", "-f", path.join(MIGRATIONS, COMMERCIAL_MIGRATION, "down.sql")],
+      { encoding: "utf8" },
+    );
+    assert.equal(down.status, 0, down.stderr);
+    const remaining = await db.query(`SELECT "providerRef", status FROM "Payment" ORDER BY id`);
+    assert.equal(remaining.rowCount, 2, "aucun paiement supprimé");
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM "ExamSession"`)).rows[0].n, 1);
+    const tables = await db.query(`SELECT to_regclass('"CreditAdjustment"') AS t`);
+    assert.equal(tables.rows[0].t, null, "journal supprimé par le retour arrière (exporter avant si nécessaire)");
+  }),
+);

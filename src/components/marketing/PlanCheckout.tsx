@@ -20,13 +20,23 @@ type Provider = "stripe" | "camerpay" | "flutterwave";
 /** CamerPay exige un numéro camerounais ; les autres prestataires non. */
 const PHONE_ERROR_HINT = "Telefonnummer";
 
-export function PlanCheckout({ plan }: { plan: PayablePlan }) {
+export function PlanCheckout({
+  plan,
+  premiumUntil = null,
+}: {
+  plan: PayablePlan;
+  /** Fin du Premium en cours (ms), si actif : Student n'est alors pas proposé. */
+  premiumUntil?: number | null;
+}) {
   const [busy, setBusy] = useState<Provider | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Révélé seulement si le serveur signale un numéro manquant ou invalide :
   // un compte qui a déjà son téléphone n'a rien à ressaisir.
   const [phoneNeeded, setPhoneNeeded] = useState(false);
   const [phone, setPhone] = useState("");
+  // Fin de Premium signalée par le serveur (course : Premium acheté dans un
+  // autre onglet depuis le chargement de la page).
+  const [blockedUntil, setBlockedUntil] = useState<number | null>(premiumUntil);
 
   const pay = async (provider: Provider) => {
     setBusy(provider);
@@ -51,8 +61,15 @@ export function PlanCheckout({ plan }: { plan: PayablePlan }) {
       const data = (await response.json().catch(() => null)) as {
         url?: string;
         error?: string;
+        code?: string;
+        premiumUntil?: number;
       } | null;
 
+      if (response.status === 409 && data?.code === "PREMIUM_ACTIVE") {
+        setBlockedUntil(data.premiumUntil ?? Date.now());
+        setBusy(null);
+        return;
+      }
       if (!response.ok || !data?.url) {
         const message = data?.error ?? "Zahlung nicht möglich.";
         // Numéro manquant ou mal formé : on ouvre le champ au lieu de
@@ -70,6 +87,27 @@ export function PlanCheckout({ plan }: { plan: PayablePlan }) {
       setBusy(null);
     }
   };
+
+  if (plan === "STUDENT" && blockedUntil) {
+    return (
+      <div className="space-y-2 rounded-sm border border-border bg-surface p-3 text-[12px]">
+        <p className="font-semibold text-foreground">
+          Sie haben bereits Premium (bis {new Date(blockedUntil).toLocaleDateString("de-DE")}).
+        </p>
+        <p className="text-muted">
+          Student kann während eines aktiven Premium-Abos nicht gekauft werden.
+          Verlängern Sie stattdessen Premium, oder wählen Sie Student nach dem
+          Ablaufdatum.
+        </p>
+        <a
+          href="#plan-PREMIUM"
+          className="inline-flex w-full items-center justify-center rounded-sm bg-accent px-3 py-1.5 text-[13px] font-medium text-white"
+        >
+          Premium verlängern
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">

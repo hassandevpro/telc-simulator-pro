@@ -117,3 +117,26 @@ export async function creditBalanceFor(
   });
   return account?.credits ?? 0;
 }
+
+/**
+ * État des périodes de sièges d'un centre, pour la tarification
+ * (lib/center-pricing.ts) : fin de la période en cours, et fin de la
+ * dernière période déjà payée (y compris une période à venir).
+ */
+export async function seatPeriodState(
+  client: Client,
+  centerId: string,
+  now: Date = new Date(),
+): Promise<{ activeEnd: Date | null; lastEnd: Date | null }> {
+  const [active, upcoming] = await Promise.all([
+    client.centerSeatGrant.aggregate({
+      where: { centerId, startsAt: { lte: now }, expiresAt: { gt: now } },
+      _max: { expiresAt: true },
+    }),
+    client.centerSeatGrant.aggregate({
+      where: { centerId, expiresAt: { gt: now } },
+      _max: { expiresAt: true },
+    }),
+  ]);
+  return { activeEnd: active._max.expiresAt, lastEnd: upcoming._max.expiresAt };
+}

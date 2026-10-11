@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card } from "@/components/ui";
+import { Button, Card, Modal } from "@/components/ui";
 import { EXAM_STRUCTURES } from "@/config/exam-structure";
 import { buildPageStops, sessionPath } from "@/lib/exam-navigation";
 import { sessionRepository } from "@/lib/repository";
@@ -35,6 +35,25 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
   const [confirmed, setConfirmed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  // Confirmation explicite avant de lancer l'épreuve (et de consommer un crédit).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Coût du démarrage annoncé par le serveur (null tant qu'il n'est pas connu).
+  const [creditPreview, setCreditPreview] = useState<
+    { charge: boolean; balance: number } | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void sessionRepository
+      .load(sessionId)
+      .then((state) => {
+        if (!cancelled && state?.creditPreview) setCreditPreview(state.creditPreview);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   const setStatus = useExamSessionStore((state) => state.setStatus);
   const initializeTimer = useTimerStore((state) => state.initialize);
@@ -56,6 +75,7 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
   };
 
   const startExam = async () => {
+    setConfirmOpen(false);
     setStarting(true);
 
     let state = await sessionRepository.load(sessionId);
@@ -173,11 +193,54 @@ export function AudioCheck({ sessionId }: AudioCheckProps) {
         <Button
           variant="primary"
           disabled={!confirmed || starting}
-          onClick={() => void startExam()}
+          onClick={() => setConfirmOpen(true)}
         >
           {starting ? "Prüfung wird gestartet…" : "Prüfung starten"}
         </Button>
       </div>
+
+      {/* Confirmation explicite : le crédit est débité dès que l'épreuve démarre. */}
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Prüfung jetzt starten?"
+        blocking
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>
+              Abbrechen
+            </Button>
+            <Button variant="primary" onClick={() => void startExam()}>
+              {creditPreview?.charge === false
+                ? "Prüfung starten"
+                : "Starten und 1 Credit verbrauchen"}
+            </Button>
+          </>
+        }
+      >
+        {creditPreview?.charge === false ? (
+          <p className="text-[13px]">
+            Für diese Prüfung wird <strong>kein Credit</strong> verbraucht
+            (Wiederholung einer bereits absolvierten Prüfung).
+          </p>
+        ) : (
+          <>
+            <p className="text-[13px]">
+              Mit dem Start wird <strong>1 Credit verbraucht</strong>
+              {creditPreview
+                ? ` (verfügbar: ${creditPreview.balance}, danach: ${Math.max(0, creditPreview.balance - 1)})`
+                : ""}
+              .
+            </p>
+            <p className="mt-2 text-[13px] text-muted">
+              Die Zeit beginnt sofort zu laufen. Bricht die Prüfung ab, wird der
+              Credit nicht automatisch zurückgegeben. Bei einem technischen
+              Problem wenden Sie sich an den Support – ein Administrator kann
+              den Credit im Einzelfall erstatten.
+            </p>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
